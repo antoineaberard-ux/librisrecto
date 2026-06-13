@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0c0c0e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LibrisRecto" />
+  <title>LibrisRecto</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ÉCRAN 1 : Scanner -->
+  <main id="scanner" class="scanner">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="frame" hidden></canvas>
+
+    <div class="overlay">
+      <header class="top-bar">
+        <div class="brand"><span class="dot"></span> LibrisRecto</div>
+      </header>
+
+      <div id="reticle" class="reticle" aria-hidden="true">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+        <div class="scanline"></div>
+      </div>
+
+      <p id="hint" class="hint">Pointez le code-barres (dos du livre) dans le cadre</p>
+
+      <footer class="bottom-bar">
+        <button id="btn-ocr" class="pill">🔤 Scanner le titre</button>
+        <button id="btn-manual" class="pill">⌨︎ Saisir</button>
+      </footer>
+    </div>
+
+    <!-- Démarrage caméra (geste requis sur iOS) -->
+    <div id="cam-gate" class="cam-gate" hidden>
+      <div class="gate-card">
+        <div class="gate-logo">LR</div>
+        <h2>LibrisRecto</h2>
+        <p>Scannez un livre, obtenez son synopsis.</p>
+        <button id="btn-start" class="pill solid big">Activer la caméra</button>
+        <button id="btn-manual-3" class="pill ghost">Rechercher sans caméra</button>
+      </div>
+    </div>
+
+    <div id="no-cam" class="no-cam" hidden>
+      <h2>Caméra indisponible</h2>
+      <p id="no-cam-msg">Autorisez la caméra, ou recherchez manuellement.</p>
+      <button id="btn-manual-2" class="pill light">Rechercher un livre</button>
+    </div>
+  </main>
+
+  <!-- ÉCRAN 2 : Bottom Sheet Synopsis -->
+  <section id="sheet" class="sheet" aria-hidden="true">
+    <div class="sheet-handle" id="sheet-handle"><span></span></div>
+    <div class="sheet-body">
+      <div id="sheet-loading" class="sheet-loading" hidden>
+        <div class="spinner"></div><p id="loading-msg">Recherche du livre…</p>
+      </div>
+
+      <article id="book" class="book" hidden>
+        <div class="book-head">
+          <img id="book-cover" class="book-cover" alt="" />
+          <div class="book-meta">
+            <h1 id="book-title">—</h1>
+            <p id="book-author" class="author">—</p>
+            <div class="rating" id="book-rating"></div>
+            <p id="book-extra" class="extra"></p>
+          </div>
+        </div>
+        <h3 class="synopsis-label">Synopsis</h3>
+        <p id="book-synopsis" class="synopsis">—</p>
+      </article>
+
+      <div id="book-error" class="book-error" hidden>
+        <h2>Livre introuvable</h2>
+        <p id="book-error-msg">Aucune correspondance.</p>
+        <button class="pill light" onclick="LibrisRecto.dismissSheet()">Réessayer</button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="manual-dialog" class="manual-dialog">
+    <form method="dialog" id="manual-form">
+      <h2>Rechercher un livre</h2>
+      <input id="manual-input" type="text" inputmode="search"
+             placeholder="ISBN (978…) ou titre / auteur" autocomplete="off" />
+      <div class="manual-actions">
+        <button value="cancel" class="pill ghost">Annuler</button>
+        <button value="ok" class="pill solid">Rechercher</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Libs : ZXing (scan iOS+Android), Tesseract (OCR titre) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
