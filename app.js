@@ -54,44 +54,49 @@ const LibrisRecto = (() => {
     requestAnimationFrame(loop);
   }
 
-  // ---------- Détection d'angle (Hough) ----------
+  // ---------- Détection d'angle (orientation des gradients, JS pur) ----------
+  // Sobel → on histogramme l'orientation des contours quasi-horizontaux
+  // (bords du livre + lignes de texte) et on prend le pic = inclinaison.
   function estimateAngle() {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw) return;
-    const W = 360, H = Math.round(vh / vw * 360);
+    const W = 240, H = Math.max(1, Math.round(vh / vw * 240));
     work.width = W; work.height = H;
     const ctx = work.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(video, 0, 0, W, H);
+    const data = ctx.getImageData(0, 0, W, H).data;
 
-    const src = cv.imread(work);
-    const gray = new cv.Mat(), edges = new cv.Mat(), lines = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.Canny(gray, edges, 60, 160, 3, false);
-    // lignes ~horizontales (bords du livre / lignes de texte)
-    cv.HoughLinesP(edges, lines, 1, Math.PI / 180, 60, Math.max(40, W * 0.18), 12);
+    const g = new Float32Array(W * H);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++)
+      g[p] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
 
-    const angles = [];
-    for (let i = 0; i < lines.rows; i++) {
-      const x1 = lines.data32S[i*4], y1 = lines.data32S[i*4+1];
-      const x2 = lines.data32S[i*4+2], y2 = lines.data32S[i*4+3];
-      let a = deg(Math.atan2(y2 - y1, x2 - x1));   // [-180,180]
-      // ramène vers l'horizontale [-90,90]
-      if (a > 90) a -= 180; else if (a < -90) a += 180;
-      if (Math.abs(a) <= 40) angles.push(a);        // ne garde que le quasi-horizontal
+    const bins = new Float32Array(81);   // orientations -40°..+40°
+    let count = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        const gx = -g[i-1-W] - 2*g[i-1] - g[i-1+W] + g[i+1-W] + 2*g[i+1] + g[i+1+W];
+        const gy = -g[i-W-1] - 2*g[i-W] - g[i-W+1] + g[i+W-1] + 2*g[i+W] + g[i+W+1];
+        const mag = Math.hypot(gx, gy);
+        if (mag < 70) continue;
+        let ori = deg(Math.atan2(gy, gx)) + 90;      // orientation du contour
+        if (ori > 90) ori -= 180; else if (ori < -90) ori += 180;
+        if (ori >= -40 && ori <= 40) { bins[Math.round(ori) + 40] += mag; count++; }
+      }
     }
-    src.delete(); gray.delete(); edges.delete(); lines.delete();
 
-    if (angles.length >= 3) {
-      angles.sort((p, q) => p - q);
-      const median = angles[Math.floor(angles.length / 2)];
-      // lissage fort + zone morte (évite l'image qui tremble)
-      if (Math.abs(median - autoAngle) > 1.2) autoAngle += (median - autoAngle) * 0.25;
-      badge.textContent = `Redressé · ${(-autoAngle).toFixed(0)}°`;
-      badge.classList.add('active');
-    } else {
-      badge.textContent = 'Cherche un livre…';
-      badge.classList.remove('active');
-    }
+    if (count < 120) { badge.textContent = 'Cherche un livre…'; badge.classList.remove('active'); return; }
+
+    let peak = 40, best = 0;
+    for (let b = 0; b < 81; b++) if (bins[b] > best) { best = bins[b]; peak = b; }
+    let a = peak - 40;
+    // interpolation parabolique (précision < 1°)
+    const l = bins[peak-1] || 0, c = bins[peak], r = bins[peak+1] || 0, dn = l - 2*c + r;
+    if (dn !== 0) a += 0.5 * (l - r) / dn;
+
+    if (Math.abs(a - autoAngle) > 1.0) autoAngle += (a - autoAngle) * 0.25;   // lissage + zone morte
+    badge.textContent = `Redressé · ${(-autoAngle).toFixed(0)}°`;
+    badge.classList.add('active');
   }
 
   // ---------- Application de la rotation ----------
@@ -143,22 +148,6 @@ const LibrisRecto = (() => {
   }
   function loopGuard() { /* la boucle tourne déjà via rAF */ }
   function haptic(p) { if (navigator.vibrate) navigator.vibrate(p); }
-
-  // ---------- OpenCV ----------
-  async function waitForCV() {
-    for (let i = 0; i < 240; i++) {
-      if (window.cv) {
-        if (typeof cv.then === 'function') { try { window.cv = await cv; } catch {} }
-        if (cv.Mat) return true;
-        if (typeof cv.onRuntimeInitialized !== 'undefined' && !cv.Mat) {
-          await new Promise(r => { cv.onRuntimeInitialized = r; setTimeout(r, 4000); });
-          if (cv.Mat) return true;
-        }
-      }
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return false;
-  }
 
   // ---------- Synopsis (secondaire) ----------
   async function scanISBN() {
@@ -245,8 +234,9 @@ const LibrisRecto = (() => {
   function needsGesture() { return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 
-  async function init() {
+  function init() {
     setupSheet(); registerSW();
+    cvReady = true;   // détection d'angle en JS pur, prête immédiatement
     $('rotate-fine').addEventListener('input', e => { manualOffset = +e.target.value; useAuto = false; badge.textContent = `Manuel · ${(-manualOffset).toFixed(0)}°`; });
     $('btn-reset').addEventListener('click', () => { useAuto = true; manualOffset = 0; $('rotate-fine').value = 0; });
     $('zoom').addEventListener('input', e => { zoom = +e.target.value; if (frozen) freeze(); else applyTransform(); });
@@ -259,11 +249,7 @@ const LibrisRecto = (() => {
     window.addEventListener('resize', applyTransform);
 
     if (needsGesture()) $('cam-gate').hidden = false; else startCamera();
-
-    cvReady = await waitForCV();
-    $('cv-status').textContent = cvReady ? '' : 'Redressement auto indisponible — utilisez le réglage manuel ↻';
-    if (cvReady) $('cv-status').classList.add('hide');
-    else setTimeout(() => $('cv-status').classList.add('hide'), 4000);
+    setTimeout(() => $('cv-status').classList.add('hide'), 3000);
   }
   document.addEventListener('DOMContentLoaded', init);
   return { dismissSheet, lookup, scanISBN };
