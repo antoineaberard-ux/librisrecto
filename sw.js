@@ -1,5 +1,5 @@
 /* Service worker LibrisRecto — cache l'app shell ; réseau pour CDN + API. */
-const CACHE = 'librisrecto-v1';
+const CACHE = 'librisrecto-v2';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'
