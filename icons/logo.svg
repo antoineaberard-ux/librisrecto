@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Fond Icône App Premium (type iOS) -->
+  <rect width="512" height="512" rx="112" fill="#1B365D"/>
+
+  <!-- Cadre de focus / Alignement (Caméra) -->
+  <path d="M140 100 H100 V140" stroke="#C5A059" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M372 100 H412 V140" stroke="#C5A059" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M100 372 V412 H140" stroke="#C5A059" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M412 372 V412 H372" stroke="#C5A059" stroke-width="12" stroke-linecap="round" fill="none"/>
+
+  <!-- Le Livre en distorsion / redressement dynamique -->
+  <path d="M180 340 L256 310 V170 L180 220 Z" fill="#E2E8F0" opacity="0.85"/>
+  <path d="M256 310 L340 310 V170 L256 170 Z" fill="#FFFFFF"/>
+
+  <!-- Reliure centrale (Ligne de symétrie) -->
+  <line x1="256" y1="170" x2="256" y2="310" stroke="#1B365D" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Effet de scan laser / Ligne d'horizon -->
+  <line x1="80" y1="256" x2="432" y2="256" stroke="#C5A059" stroke-width="4" stroke-dasharray="12 12" opacity="0.6"/>
+</svg>

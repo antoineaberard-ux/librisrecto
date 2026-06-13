@@ -62,9 +62,10 @@ html, body {
   padding: 28px; background: radial-gradient(120% 80% at 50% 0%, #1a1a20 0%, var(--bg) 70%); }
 .cam-gate[hidden] { display: none; }
 .gate-card { text-align: center; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
-.gate-logo { width: 76px; height: 76px; margin: 0 auto 4px; border-radius: 20px; display: grid; place-items: center;
-  font-weight: 800; font-size: 30px; color: var(--amber); background: var(--card); border: 2px solid var(--amber); }
+.gate-logo-img { width: 120px; height: 120px; margin: 0 auto 4px; border-radius: 26px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.5); display: block; }
 .gate-card h2 { margin: 0; } .gate-card p { color: var(--muted); margin: 0 0 8px; }
+a.pill { text-decoration: none; text-align: center; display: inline-block; }
 
 .no-cam { position: absolute; inset: 0; z-index: 20; flex-direction: column; gap: 14px; align-items: center;
   justify-content: center; text-align: center; padding: 30px; background: var(--bg); }

@@ -248,7 +248,7 @@ const LibrisRecto = (() => {
     $('btn-retry').addEventListener('click', startCamera);
     window.addEventListener('resize', applyTransform);
 
-    if (needsGesture()) $('cam-gate').hidden = false; else startCamera();
+    $('cam-gate').hidden = false;   // écran d'accueil (logo + démarrage) sur iOS et Android
     setTimeout(() => $('cv-status').classList.add('hide'), 3000);
   }
   document.addEventListener('DOMContentLoaded', init);
