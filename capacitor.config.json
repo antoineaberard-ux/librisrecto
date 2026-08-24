@@ -1,0 +1,11 @@
+{
+  "appId": "fr.aberard.librisrecto",
+  "appName": "LibrisRecto",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

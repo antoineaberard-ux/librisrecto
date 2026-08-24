@@ -11,6 +11,14 @@
       "**/.*",
       "**/node_modules/**",
       "test/**",
+      "android/**",
+      "ios/**",
+      "www/**",
+      "scripts/**",
+      "dist/**",
+      "package.json",
+      "package-lock.json",
+      "capacitor.config.json",
       "graphify-out/**",
       "serve.py",
       "CLAUDE.md",
@@ -21,25 +29,50 @@
       {
         "//": "Le service worker et la page ne doivent jamais être servis depuis un cache HTTP, sinon une version buguée reste collée sur le téléphone.",
         "source": "/sw.js",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
       },
       {
-        "source": "/index.html",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        "source": "/{index,install}.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
       },
       {
         "source": "/manifest.webmanifest",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
       },
       {
         "//": "Les icônes ne changent qu'à la régénération : cache long.",
         "source": "/icons/**",
-        "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }]
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=604800"
+          }
+        ]
       },
       {
         "//": "La caméra doit rester autorisée sur l'origine.",
         "source": "**",
-        "headers": [{ "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=()" }]
+        "headers": [
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(self), microphone=(), geolocation=()"
+          }
+        ]
       }
     ]
   },

@@ -783,8 +783,12 @@ const LibrisRecto = (() => {
   function openDialog() { $('info-dialog').showModal(); }
   function closeDialog() { const d = $('info-dialog'); if (d.open) d.close('cancel'); }
 
+  // Dans l'app native les fichiers sont déjà locaux : un service worker
+  // n'apporterait rien et son cache ferait écran aux mises à jour de l'APK.
+  const isNative = () => !!window.__LIBRIS_NATIVE__ || !!window.Capacitor?.isNativePlatform?.();
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if (isNative() || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 
   function init() {

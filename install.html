@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c0c0e" />
+  <title>Installer LibrisRecto</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="install-page.css" />
+</head>
+<body class="page">
+  <main class="wrap">
+    <header class="hero">
+      <img src="icons/logo.svg" alt="" width="96" height="96" class="hero-icon" />
+      <h1>LibrisRecto</h1>
+      <p class="tag">Redressez un livre incliné pour lire le titre sans pencher la tête.</p>
+      <a class="pill solid big" href="./">Ouvrir l'application</a>
+    </header>
+
+    <section id="already" class="card ok" hidden>
+      <h2>✓ Déjà installée</h2>
+      <p>LibrisRecto est sur votre écran d'accueil. Rien à faire.</p>
+    </section>
+
+    <section id="steps-ios" class="card" hidden>
+      <h2>Sur iPhone et iPad</h2>
+      <p class="lead">Trois gestes, une seule fois — dans <b>Safari</b>.</p>
+      <ol class="steps">
+        <li><span class="num">1</span><span>Touchez
+          <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M8.5 6.5 12 3l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M6 11v8a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19v-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <b>Partager</b>, en bas de l'écran</span></li>
+        <li><span class="num">2</span><span>Faites défiler la liste, puis <b>Sur l'écran d'accueil</b></span></li>
+        <li><span class="num">3</span><span><b>Ajouter</b>, en haut à droite</span></li>
+      </ol>
+      <p class="note">Chrome et Firefox sur iPhone ne savent pas installer d'application : ouvrez cette page dans <b>Safari</b>.</p>
+    </section>
+
+    <section id="steps-android" class="card" hidden>
+      <h2>Sur Android</h2>
+      <p class="lead">Un seul geste si votre navigateur le propose.</p>
+      <button id="install-now" class="pill solid block" hidden>Installer maintenant</button>
+      <ol class="steps">
+        <li><span class="num">1</span><span>Ouvrez le menu <b>⋮</b> du navigateur</span></li>
+        <li><span class="num">2</span><span><b>Ajouter à l'écran d'accueil</b> — ou <b>Installer l'application</b></span></li>
+        <li><span class="num">3</span><span>Confirmez</span></li>
+      </ol>
+      <p class="note">Sur Samsung Internet, le menu est en bas et l'entrée s'appelle <b>Ajouter la page à</b> → <b>Écran d'accueil</b>.</p>
+    </section>
+
+    <section id="steps-desktop" class="card" hidden>
+      <h2>Sur ordinateur</h2>
+      <p class="lead">Chrome et Edge affichent une icône d'installation dans la barre d'adresse.</p>
+      <button id="install-now-desktop" class="pill solid block" hidden>Installer maintenant</button>
+      <p class="note">L'app a besoin d'une caméra : elle est surtout utile sur téléphone.</p>
+    </section>
+
+    <section class="card muted">
+      <h2>Ce que l'installation change</h2>
+      <ul class="bullets">
+        <li>Une icône sur l'écran d'accueil</li>
+        <li>Plein écran, sans barre de navigateur</li>
+        <li>Ouverture immédiate, même sans réseau</li>
+      </ul>
+      <p class="note">Aucun compte, aucune inscription. Les livres scannés restent sur l'appareil.</p>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const ua = navigator.userAgent;
+      const isAndroid = /Android/.test(ua);
+      // Le test MacIntel + tactile repère l'iPad, qui se déclare « Macintosh ».
+      // Sans l'exclusion d'Android, un téléphone tactile y tombait aussi.
+      const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+        (!isAndroid && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const installed = window.matchMedia?.('(display-mode: standalone)').matches ||
+        navigator.standalone === true;
+
+      if (installed) {
+        $('already').hidden = false;
+      } else if (isIOS) {
+        $('steps-ios').hidden = false;
+      } else if (isAndroid) {
+        $('steps-android').hidden = false;
+      } else {
+        $('steps-desktop').hidden = false;
+      }
+
+      // L'événement n'arrive que si le navigateur juge le site installable :
+      // on ne montre le bouton qu'à ce moment-là, jamais « au cas où ».
+      let deferred = null;
+      const buttons = [$('install-now'), $('install-now-desktop')];
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferred = e;
+        buttons.forEach((b) => { if (b) b.hidden = false; });
+      });
+      buttons.forEach((b) => b?.addEventListener('click', async () => {
+        if (!deferred) return;
+        const prompt = deferred;
+        deferred = null;
+        buttons.forEach((x) => { if (x) x.hidden = true; });
+        prompt.prompt();
+        const { outcome } = await prompt.userChoice;
+        if (outcome === 'accepted') { $('already').hidden = false; }
+      }));
+
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    })();
+  </script>
+</body>
+</html>

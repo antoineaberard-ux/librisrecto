@@ -11,7 +11,8 @@ auteur, note et **synopsis** (Open Library / Google Books).
 
 ## Tester
 
-- **En ligne (iOS + Android)** : https://librisrecto.web.app — puis « Ajouter à l'écran d'accueil ».
+- **Installer (iOS + Android)** : https://librisrecto.web.app/install — la page détecte le téléphone et donne les gestes exacts.
+- **Ouvrir directement** : https://librisrecto.web.app
 - **Miroir de secours** : https://antoineaberard-ux.github.io/librisrecto/ (GitHub Pages).
 - **En local** : `python3 serve.py` → http://localhost:5180 (Chrome, webcam).
 - **Tests de la détection d'angle** : `node test/angle.test.mjs` (aucune dépendance).
@@ -78,6 +79,21 @@ identifiant de personne, aucune position, aucune image. Les règles Firestore
 
 Si Firestore est injoignable ou désactivé, l'app continue en local sans rien
 signaler.
+
+## Installation
+
+PWA des deux côtés, pas d'app native.
+
+| | Chemin |
+|---|---|
+| Android | `beforeinstallprompt` → bouton « Installer », un seul geste. Repli : menu du navigateur → « Ajouter à l'écran d'accueil » |
+| iOS | Aucune API n'existe : Safari → Partager → Sur l'écran d'accueil. L'app montre le geste d'elle-même |
+
+Un projet **Capacitor** reste dans `android/` et produit un APK signé
+(`npm run apk`), mais il n'est plus distribué : **Samsung bloque par défaut
+l'installation hors Play Store** (Auto Blocker, One UI récent), ce qui rend le
+sideload inutilisable pour l'usage visé. Le projet sert de base si un dépôt sur
+le Play Store devient nécessaire.
 
 ## Déploiement
 

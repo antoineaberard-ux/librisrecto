@@ -83,6 +83,17 @@
       <button id="btn-retry" class="pill light">Réessayer</button>
     </div>
 
+    <!-- Invitation à installer sur l'écran d'accueil -->
+    <div id="install-banner" class="install-banner" hidden>
+      <img src="icons/icon-192.png" alt="" width="34" height="34" />
+      <div class="install-text">
+        <strong>Installer LibrisRecto</strong>
+        <span>Une icône sur l'écran d'accueil, comme une vraie app.</span>
+      </div>
+      <button id="install-go" class="pill solid small">Installer</button>
+      <button id="install-close" class="install-x" aria-label="Plus tard">✕</button>
+    </div>
+
     <div id="cv-status" class="cv-status">Cadrez le livre dans le rectangle — ↻&nbsp;90° si le dos est vertical</div>
   </main>
 
@@ -128,6 +139,41 @@
     </div>
   </section>
 
+  <!-- iOS n'expose aucune API d'installation : on montre le geste. -->
+  <section id="ios-install" class="sheet" aria-hidden="true">
+    <div class="sheet-handle"><span></span></div>
+    <div class="sheet-body">
+      <h2 class="ios-title">Ajouter à l'écran d'accueil</h2>
+      <p class="ios-sub">Trois gestes, une seule fois. Ensuite LibrisRecto s'ouvre comme une app, en plein écran.</p>
+      <ol class="ios-steps">
+        <li>
+          <span class="num">1</span>
+          <span class="txt">Touchez
+            <svg class="ios-glyph" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M8.5 6.5 12 3l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M6 11v8a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19v-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <b>Partager</b>, en bas de Safari
+          </span>
+        </li>
+        <li>
+          <span class="num">2</span>
+          <span class="txt">Faites défiler, puis <b>Sur l'écran d'accueil</b></span>
+        </li>
+        <li>
+          <span class="num">3</span>
+          <span class="txt"><b>Ajouter</b>, en haut à droite</span>
+        </li>
+      </ol>
+      <p class="ios-note">Si le menu Partager n'apparaît pas, ouvrez d'abord cette page dans <b>Safari</b> : Chrome et Firefox sur iPhone ne savent pas installer d'app.</p>
+      <div class="ios-actions">
+        <button id="ios-install-later" class="pill ghost">Plus tard</button>
+        <button id="ios-install-close" class="pill solid">C'est fait</button>
+      </div>
+    </div>
+  </section>
+
   <dialog id="info-dialog" class="manual-dialog">
     <form method="dialog" id="info-form">
       <h2>Infos du livre</h2>
@@ -143,6 +189,7 @@
     </form>
   </dialog>
 
+  <script src="install.js"></script>
   <script type="module" src="history.js"></script>
   <script src="app.js"></script>
 </body>

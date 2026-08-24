@@ -1,0 +1,34 @@
+/* Page d'installation — document qui défile, contrairement à l'app plein écran. */
+html, body.page { height: auto; overflow: auto; }
+body.page { background: radial-gradient(120% 60% at 50% 0%, #191922 0%, var(--bg) 60%); }
+
+.wrap { max-width: 560px; margin: 0 auto;
+  padding: calc(var(--safe-top) + 40px) 20px calc(var(--safe-bottom) + 60px); }
+
+.hero { text-align: center; margin-bottom: 36px; }
+.hero-icon { border-radius: 22px; box-shadow: 0 14px 40px rgba(0,0,0,.55); }
+.hero h1 { margin: 18px 0 8px; font-size: 30px; letter-spacing: -.5px; }
+.tag { color: var(--muted); font-size: 15.5px; line-height: 1.55; margin: 0 0 24px; }
+.hero .pill.big { width: auto; padding: 15px 32px; }
+
+.card { background: var(--sheet-bg); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 20px; padding: 24px 22px; margin-bottom: 18px; }
+.card[hidden] { display: none; }
+.card h2 { margin: 0 0 8px; font-size: 19px; }
+.card.ok { border-color: rgba(52,209,122,.35); }
+.card.ok h2 { color: var(--green); }
+.card.muted h2 { font-size: 15px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+.lead { color: var(--muted); font-size: 14.5px; line-height: 1.5; margin: 0 0 20px; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.steps li { display: flex; align-items: flex-start; gap: 14px; }
+.steps .num { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--amber); color: #1a1500; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center; }
+.steps li > span:last-child { font-size: 15.5px; line-height: 1.6; padding-top: 2px; }
+.glyph { width: 20px; height: 20px; vertical-align: -4px; color: #4da2ff; }
+
+.bullets { margin: 0 0 16px; padding-left: 20px; color: #e7e3da; font-size: 15px; line-height: 1.8; }
+.note { color: var(--muted); font-size: 13px; line-height: 1.55;
+  background: var(--card); border-radius: 12px; padding: 12px 14px; margin: 20px 0 0; }
+.card .pill.block { margin-bottom: 20px; }

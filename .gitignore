@@ -4,3 +4,12 @@ raw/
 *.pdf
 __pycache__/
 .firebase/
+node_modules/
+www/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+*.keystore
+keystore.properties
