@@ -1,0 +1,49 @@
+{
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      ".firebaserc",
+      ".firebase/**",
+      ".git/**",
+      ".claude/**",
+      "**/.*",
+      "**/node_modules/**",
+      "test/**",
+      "graphify-out/**",
+      "serve.py",
+      "CLAUDE.md",
+      "README.md"
+    ],
+    "cleanUrls": true,
+    "headers": [
+      {
+        "//": "Le service worker et la page ne doivent jamais être servis depuis un cache HTTP, sinon une version buguée reste collée sur le téléphone.",
+        "source": "/sw.js",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+      },
+      {
+        "source": "/index.html",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      },
+      {
+        "source": "/manifest.webmanifest",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      },
+      {
+        "//": "Les icônes ne changent qu'à la régénération : cache long.",
+        "source": "/icons/**",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }]
+      },
+      {
+        "//": "La caméra doit rester autorisée sur l'origine.",
+        "source": "**",
+        "headers": [{ "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=()" }]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

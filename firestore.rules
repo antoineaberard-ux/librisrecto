@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Historique des livres scannés. Chaque appareil a son identité anonyme et ne
+// peut lire ni écrire que sa propre collection. Aucune donnée n'est partagée.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/books/{bookId} {
+      allow read, delete: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['isbn', 'title', 'author', 'cover', 'year', 'scannedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 300;
+    }
+    // Tout le reste est fermé.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

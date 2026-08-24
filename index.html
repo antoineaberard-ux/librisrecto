@@ -23,13 +23,20 @@
     <canvas id="freeze" class="freeze" hidden></canvas>
     <canvas id="work" hidden></canvas>
 
+    <!-- Anneau de mise au point (retour visuel du toucher) -->
+    <div id="focus-ring" class="focus-ring"></div>
+
     <!-- Cadre de visée : délimite exactement la zone analysée -->
     <div id="roi" class="roi" hidden><span></span><span></span><span></span><span></span></div>
 
     <div class="overlay">
       <header class="top-bar">
         <div class="brand"><span class="dot"></span> LibrisRecto</div>
-        <div id="angle-badge" class="angle-badge">—</div>
+        <div class="top-actions">
+          <button id="btn-history" class="icon-btn" title="Livres déjà scannés">📚</button>
+          <button id="btn-torch" class="icon-btn" title="Lampe" hidden>💡</button>
+          <div id="angle-badge" class="angle-badge">—</div>
+        </div>
       </header>
 
       <p id="hint" class="hint">Cadrez le livre — le titre se redresse tout seul</p>
@@ -55,7 +62,8 @@
     <!-- HUD de scan code-barres (vue non pivotée) -->
     <div id="scan-hud" class="scan-hud" hidden>
       <p id="scan-msg">Visez le code-barres…</p>
-      <div class="scan-frame"></div>
+      <div id="scan-frame" class="scan-frame"></div>
+      <p class="scan-tip">Touchez l'écran pour faire le point</p>
       <button id="btn-scan-cancel" class="pill light">Annuler</button>
     </div>
 
@@ -106,6 +114,20 @@
     </div>
   </section>
 
+  <!-- Historique des livres scannés -->
+  <section id="history-sheet" class="sheet" aria-hidden="true">
+    <div class="sheet-handle" id="history-handle"><span></span></div>
+    <div class="sheet-body">
+      <div class="history-head">
+        <h2>Livres scannés</h2>
+        <button id="btn-history-clear" class="mini">Tout effacer</button>
+      </div>
+      <p id="history-sync" class="history-sync">Enregistré sur cet appareil.</p>
+      <ul id="history-list" class="history-list"></ul>
+      <p id="history-empty" class="history-empty" hidden>Aucun livre pour l'instant. Scannez un ISBN ou lisez un titre.</p>
+    </div>
+  </section>
+
   <dialog id="info-dialog" class="manual-dialog">
     <form method="dialog" id="info-form">
       <h2>Infos du livre</h2>
@@ -121,6 +143,7 @@
     </form>
   </dialog>
 
+  <script type="module" src="history.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

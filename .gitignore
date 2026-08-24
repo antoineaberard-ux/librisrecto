@@ -3,3 +3,4 @@ graphify-out/
 raw/
 *.pdf
 __pycache__/
+.firebase/

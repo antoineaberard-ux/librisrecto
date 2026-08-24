@@ -2,9 +2,9 @@
    Stratégie : réseau d'abord pour l'app shell (sinon une version buguée reste
    collée sur le téléphone indéfiniment), cache en repli hors-ligne.
    CDN et API : réseau direct, jamais mis en cache. */
-const CACHE = 'librisrecto-v5';
+const CACHE = 'librisrecto-v6';
 const SHELL = [
-  './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
+  './', './index.html', './styles.css', './app.js', './history.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/logo.svg'
 ];
 

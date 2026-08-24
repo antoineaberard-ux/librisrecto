@@ -30,11 +30,11 @@ const LibrisRecto = (() => {
   const ANALYSIS_W = 224;      // largeur d'analyse (perf)
   const EST_PERIOD = 110;      // ms entre deux estimations (~9 fps)
   // Orientation repliée modulo 90° : les lignes de texte, les jambages des
-// lettres et les bords de la couverture sont tous alignés sur les mêmes axes,
-// donc ils votent tous dans le même bin. Décider LEQUEL des deux axes porte le
-// titre est peu fiable sur une vignette de 224 px ; on applique donc la
-// rotation minimale (< 45°) et le bouton quart de tour couvre les dos verticaux.
-const NBINS = 90;            // 1° par bin, orientation modulo 90°
+  // lettres et les bords de la couverture sont tous alignés sur les mêmes axes,
+  // donc ils votent tous dans le même bin. Décider LEQUEL des deux axes porte le
+  // titre est peu fiable sur une vignette de 224 px ; on applique donc la
+  // rotation minimale (< 45°) et le bouton quart de tour couvre les dos verticaux.
+  const NBINS = 90;            // 1° par bin, orientation modulo 90°
 
   let stream = null, running = false;
   let dispAngle = 0;           // orientation détectée, lissée (continue, non bornée)
@@ -47,6 +47,9 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
   let scanMode = false;        // scan code-barres : on affiche la vue non pivotée
   let lastEstimate = 0;
   let zxingReader = null, ocrWorker = null, cancelScan = null;
+  let track = null, caps = {}, torchOn = false;   // piste vidéo et ses capacités matérielles
+  let focusRingTimer = 0;
+  const scanCanvas = document.createElement('canvas');
 
   // ---------- Angles ----------
   // Ramène dans (-45, 45] : les orientations sont définies modulo 90°.
@@ -59,7 +62,14 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     if (!navigator.mediaDevices?.getUserMedia) return showNoCam('Caméra non supportée par ce navigateur.');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: {
+          facingMode: { ideal: 'environment' },
+          // Un code-barres se lit à 10-15 cm : sans autofocus continu le
+          // capteur reste sur l'hyperfocale et l'image est floue de près.
+          // `advanced` est au mieux : les contraintes inconnues sont ignorées.
+          width: { ideal: 2560 }, height: { ideal: 1440 },
+          advanced: [{ focusMode: 'continuous' }]
+        },
         audio: false
       });
       video.srcObject = stream;
@@ -67,12 +77,104 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
       $('no-cam').hidden = true;
       $('roi').hidden = false;
       running = true;
+      setupTrack();
     } catch (err) {
       const denied = /NotAllowed|Permission/i.test(String(err));
       showNoCam(denied ? 'Caméra refusée. Autorisez-la puis réessayez.' : 'Caméra inaccessible.');
     }
   }
   function showNoCam(msg) { $('no-cam-msg').textContent = msg; $('no-cam').hidden = false; }
+
+  /* Capacités de la piste vidéo. Android Chrome expose focus, torche et zoom
+     optique ; iOS Safari n'expose rien de tout ça (applyConstraints échoue en
+     silence), d'où les boutons masqués plutôt que morts. */
+  function setupTrack() {
+    track = stream.getVideoTracks()[0] || null;
+    caps = track?.getCapabilities ? (track.getCapabilities() || {}) : {};
+    applyFocusMode('continuous');
+    $('btn-torch').hidden = !caps.torch;
+    setupZoomSlider();
+  }
+  async function applyFocusMode(mode) {
+    if (!track?.applyConstraints) return false;
+    if (caps.focusMode && !caps.focusMode.includes(mode)) return false;
+    try { await track.applyConstraints({ advanced: [{ focusMode: mode }] }); return true; }
+    catch { return false; }
+  }
+
+  // Point du repère écran -> coordonnées normalisées du capteur. La scène est
+  // pivotée et zoomée, et le <video> est en object-fit:cover : il faut défaire
+  // les deux, sinon le point de mise au point tombe à côté.
+  function screenToSensor(px, py) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return null;
+    const w = window.innerWidth, h = window.innerHeight;
+    const rad = -currentAngle() * Math.PI / 180;
+    const s = coverScale(currentAngle()) * zoom;
+    const dx = px - w / 2, dy = py - h / 2;
+    const ux = (dx * Math.cos(rad) - dy * Math.sin(rad)) / s + w / 2;
+    const uy = (dx * Math.sin(rad) + dy * Math.cos(rad)) / s + h / 2;
+    const cover = Math.max(w / vw, h / vh);
+    const dispW = vw * cover, dispH = vh * cover;
+    const clamp = (v) => Math.min(1, Math.max(0, v));
+    return { x: clamp((ux - (w - dispW) / 2) / dispW), y: clamp((uy - (h - dispH) / 2) / dispH) };
+  }
+
+  async function focusAt(px, py) {
+    const p = screenToSensor(px, py);
+    if (!p || !track?.applyConstraints) return;
+    showFocusRing(px, py);
+    const single = caps.focusMode?.includes('single-shot');
+    try {
+      await track.applyConstraints({
+        advanced: [{ pointsOfInterest: [{ x: p.x, y: p.y }], focusMode: single ? 'single-shot' : 'continuous' }]
+      });
+    } catch { /* non supporté : le focus continu reste actif */ }
+    if (single) {
+      clearTimeout(focusRingTimer);
+      focusRingTimer = setTimeout(() => applyFocusMode('continuous'), 3000);
+    }
+  }
+  function showFocusRing(px, py) {
+    const ring = $('focus-ring');
+    ring.style.left = `${px}px`; ring.style.top = `${py}px`;
+    ring.classList.remove('pulse');
+    void ring.offsetWidth;           // relance l'animation
+    ring.classList.add('pulse');
+  }
+
+  async function toggleTorch() {
+    if (!track?.applyConstraints || !caps.torch) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next }] });
+      torchOn = next;
+    } catch { torchOn = false; }
+    $('btn-torch').classList.toggle('on', torchOn);
+    $('btn-torch').textContent = torchOn ? '🔦' : '💡';
+  }
+  async function setTorch(on) { if (caps.torch && torchOn !== on) await toggleTorch(); }
+
+  // Le curseur pilote le zoom OPTIQUE quand la caméra le permet (bien plus net
+  // qu'un agrandissement de pixels), sinon il retombe sur un scale CSS.
+  function setupZoomSlider() {
+    const z = $('zoom');
+    z.min = 1; z.max = 4; z.step = 0.1; z.value = 1;
+    $('zoom-row').classList.toggle('optical', !!caps.zoom);
+  }
+  function applyZoom(value) {
+    if (!frozen && caps.zoom && track?.applyConstraints) {
+      const { min, max, step } = caps.zoom;
+      const top = Math.min(max, min * 4);
+      const target = min + (value - 1) / 3 * (top - min);
+      zoom = 1;                       // pas de double zoom : le capteur s'en charge
+      track.applyConstraints({ advanced: [{ zoom: step ? Math.round(target / step) * step : target }] })
+        .catch(() => { zoom = value; });
+    } else {
+      zoom = value;
+    }
+    freezeDirty = true;
+  }
   function restoreStream() {
     if (stream && !video.srcObject) { video.srcObject = stream; video.play().catch(() => {}); }
   }
@@ -234,6 +336,9 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     rawFrame.getContext('2d').drawImage(video, 0, 0, vw, vh);
     frozen = true;
     freezeCanvas.hidden = false;
+    // Le zoom optique est déjà dans la frame capturée : on repart de 1 pour
+    // que le curseur ne l'applique pas une seconde fois en CSS.
+    zoom = 1; $('zoom').value = 1;
     freezeDirty = false; renderFreeze();
     $('btn-freeze').innerHTML = '▶ Reprendre';
     haptic(15);
@@ -242,6 +347,7 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     frozen = false; freezeCanvas.hidden = true;
     $('btn-freeze').innerHTML = '⏸ Figer';
     zoom = 1; $('zoom').value = 1;
+    applyZoom(1);
     applyTransform();
   }
   function renderFreeze() {
@@ -325,11 +431,14 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     if (frozen) unfreeze();
     scanMode = true; applyTransform();
     showScanHud('Visez le code-barres au dos du livre…');
+    // Un code-barres se lit de près : on force la mise au point sur le cadre.
+    focusAt(window.innerWidth / 2, window.innerHeight / 2);
     let timer = 0;
     try {
+      const decode = await pickDecoder();
       const code = await new Promise((resolve, reject) => {
-        timer = setTimeout(() => { cancelScan?.(); reject(new Error('timeout')); }, 25000);
-        detect().then(resolve, reject);
+        timer = setTimeout(() => { cancelScan?.(); reject(new Error('timeout')); }, 30000);
+        pumpFrames(decode).then(resolve, reject);
       });
       clearTimeout(timer);
       endScan();
@@ -341,55 +450,107 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
       if (String(err.message) === 'cancel') return;
       openSheet();
       showError(/CDN/.test(String(err.message))
-        ? 'Scanner indisponible hors connexion. Saisissez l\'ISBN à la main.'
-        : 'Code-barres non détecté. Rapprochez-vous, éclairez le code, ou saisissez l\'ISBN à la main.');
+        ? "Scanner indisponible hors connexion. Saisissez l'ISBN à la main."
+        : "Code-barres non détecté. Tenez le code à 15 cm dans le cadre, touchez l'écran pour faire le point, allumez la lampe si besoin — ou saisissez l'ISBN à la main.");
     }
   }
-  function endScan() { cancelScan = null; scanMode = false; hideScanHud(); restoreStream(); applyTransform(); }
+  function endScan() {
+    cancelScan = null; scanMode = false;
+    hideScanHud(); restoreStream(); applyTransform();
+    setTorch(false);
+  }
 
-  function detect() { return ('BarcodeDetector' in window) ? detectNative() : detectZXing(); }
+  /* Recadrage de la bande visée, à la résolution NATIVE du capteur.
+     C'est le vrai correctif du scan : décoder la frame entière revient à
+     donner au décodeur un code-barres large de quelques dizaines de pixels,
+     alors que le capteur en a des centaines dans le cadre. */
+  function scanFrameCrop() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return null;
+    let box = $('scan-frame').getBoundingClientRect();
+    if (box.width < 8 || box.height < 8) {
+      // Le HUD vient d'apparaître et la mise en page n'est pas encore calculée :
+      // on retombe sur une bande centrée équivalente plutôt que de perdre la frame.
+      const w = window.innerWidth, h = window.innerHeight;
+      const bw = Math.min(w * 0.84, 420), bh = 130;
+      box = { left: (w - bw) / 2, right: (w + bw) / 2, top: (h - bh) / 2, bottom: (h + bh) / 2, width: bw, height: bh };
+    }
+    const padX = box.width * 0.10, padY = box.height * 0.35;
+    const a = screenToSensor(box.left - padX, box.top - padY);
+    const b = screenToSensor(box.right + padX, box.bottom + padY);
+    if (!a || !b) return null;
+    const sx = Math.round(a.x * vw), sy = Math.round(a.y * vh);
+    const sw = Math.round((b.x - a.x) * vw), sh = Math.round((b.y - a.y) * vh);
+    if (sw < 40 || sh < 20) return null;
+    scanCanvas.width = sw; scanCanvas.height = sh;
+    scanCanvas.getContext('2d', { willReadFrequently: true })
+      .drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    return scanCanvas;
+  }
 
-  async function detectNative() {
-    const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
-    const supported = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
-    const formats = wanted.filter((f) => supported.includes(f));
-    if (!formats.length) return detectZXing();
-    const detector = new window.BarcodeDetector({ formats });
+  const fullCanvas = document.createElement('canvas');
+  /* Vue large. On ne réduit qu'au strict nécessaire : mesuré sur des images
+     floues et bruitées comme en vrai, passer 2560 px à 1600 px fait tomber le
+     taux de lecture de 5/5 à 0/5. BarcodeDetector est natif et encaisse la
+     pleine résolution ; ZXing est en JS, d'où un plafond plus bas pour lui. */
+  function fullFrame(maxWidth) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return null;
+    const scale = Math.min(1, maxWidth / vw);
+    fullCanvas.width = Math.round(vw * scale); fullCanvas.height = Math.round(vh * scale);
+    fullCanvas.getContext('2d', { willReadFrequently: true })
+      .drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+    return fullCanvas;
+  }
+
+  /* Alterne cadre serré et vue large : le premier attrape le code tenu près,
+     le second celui d'un livre posé plus loin. */
+  function pumpFrames({ decode, maxWidth }) {
     return new Promise((resolve, reject) => {
-      let stopped = false;
+      let stopped = false, useCrop = true, tries = 0;
       cancelScan = () => { stopped = true; };
       const tick = async () => {
         if (stopped) return reject(new Error('cancel'));
-        try {
-          const codes = await detector.detect(video);
-          if (codes.length && codes[0].rawValue) { stopped = true; return resolve(codes[0].rawValue); }
-        } catch { /* frame non décodable */ }
-        setTimeout(tick, 160);
+        const source = (useCrop ? scanFrameCrop() : fullFrame(maxWidth)) || fullFrame(maxWidth);
+        useCrop = !useCrop;
+        if (source) {
+          try {
+            const code = await decode(source);
+            if (code) { stopped = true; return resolve(code); }
+          } catch { /* rien sur cette frame */ }
+        }
+        // Après 4 s sans succès, l'éclairage est souvent en cause.
+        if (++tries === 32 && caps.torch && !torchOn) {
+          $('scan-msg').textContent = 'Toujours rien — essayez la lampe 💡';
+        }
+        setTimeout(tick, 110);
       };
       tick();
     });
   }
 
-  async function detectZXing() {
+  async function pickDecoder() {
+    if ('BarcodeDetector' in window) {
+      const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
+      const supported = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
+      const formats = wanted.filter((f) => supported.includes(f));
+      if (formats.length) {
+        const detector = new window.BarcodeDetector({ formats });
+        return { decode: async (src) => (await detector.detect(src))[0]?.rawValue, maxWidth: Infinity };
+      }
+    }
     if (!window.ZXing) await loadScript(CDN_ZXING);
     const Z = window.ZXing;
-    // Sans restriction de format, ZXing teste 20 symbologies par frame et rate l'ISBN.
+    // Sans restriction de format, ZXing teste vingt symbologies par frame.
     const hints = new Map();
     hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,
       [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E]);
     hints.set(Z.DecodeHintType.TRY_HARDER, true);
-    if (!zxingReader) zxingReader = new Z.BrowserMultiFormatReader(hints, 160);
-
-    return new Promise((resolve, reject) => {
-      let done = false;
-      // reset() couperait les pistes du MediaStream et tuerait la caméra pour de bon.
-      const stop = () => { try { zxingReader.stopContinuousDecode(); } catch { /* déjà arrêté */ } };
-      cancelScan = () => { if (done) return; done = true; stop(); reject(new Error('cancel')); };
-      zxingReader.decodeFromVideoElement(video, (result) => {
-        if (!result || done) return;
-        done = true; stop(); resolve(result.getText());
-      }).catch((e) => { if (!done) { done = true; stop(); reject(e); } });
-    });
+    if (!zxingReader) zxingReader = new Z.BrowserMultiFormatReader(hints);
+    else zxingReader.hints = hints;
+    // decodeFromCanvas : on garde la main sur le flux. decodeFromVideoElement
+    // impose reset(), qui coupe les pistes du MediaStream et tue la caméra.
+    return { decode: async (src) => zxingReader.decodeFromCanvas(src)?.getText(), maxWidth: 1920 };
   }
 
   function showScanHud(msg) {
@@ -464,7 +625,7 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     openSheet(); showLoading('Recherche du livre…');
     try {
       const book = q.isbn ? await byISBN(q.isbn) : await byQuery(q.text);
-      if (book) renderBook(book);
+      if (book) renderBook({ ...book, isbn: q.isbn || book.isbn || '' });
       else showError(q.isbn ? `Aucun livre pour l'ISBN ${q.isbn}.` : 'Aucune correspondance.');
     } catch { showError('Erreur réseau.'); }
   }
@@ -538,6 +699,7 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
   // ---------- Feuille de synopsis ----------
   function renderBook(b) {
     $('sheet-loading').hidden = true; $('book-error').hidden = true; $('book').hidden = false;
+    window.LibrisHistory?.add(b);
     $('book-title').textContent = b.title;
     $('book-author').textContent = b.author;
     const c = $('book-cover');
@@ -571,6 +733,52 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
     handle.addEventListener('click', () => sheet.classList.toggle('full'));
   }
 
+  // ---------- Historique ----------
+  function openHistory() {
+    dismissSheet();
+    const h = $('history-sheet');
+    h.classList.add('open', 'full');
+    h.setAttribute('aria-hidden', 'false');
+  }
+  function closeHistory() {
+    const h = $('history-sheet');
+    h.classList.remove('open', 'full');
+    h.setAttribute('aria-hidden', 'true');
+  }
+  function renderHistory(items) {
+    const ul = $('history-list');
+    ul.textContent = '';
+    $('history-empty').hidden = items.length > 0;
+    for (const it of items) {
+      const li = document.createElement('li');
+      li.className = 'history-item';
+      const img = document.createElement('img');
+      img.alt = ''; img.loading = 'lazy';
+      if (it.cover) img.src = it.cover;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const t = document.createElement('div'); t.className = 't'; t.textContent = it.title;
+      const a = document.createElement('div'); a.className = 'a';
+      a.textContent = [it.author, it.year].filter(Boolean).join(' · ');
+      meta.append(t, a);
+      const del = document.createElement('button');
+      del.className = 'del'; del.type = 'button';
+      del.setAttribute('aria-label', `Retirer ${it.title}`);
+      del.textContent = '✕';
+      del.addEventListener('click', (e) => { e.stopPropagation(); window.LibrisHistory?.remove(it.id); });
+      // Retoucher une fiche : on relance la recherche depuis l'historique.
+      li.addEventListener('click', () => {
+        closeHistory();
+        lookup(it.isbn ? { isbn: it.isbn } : { text: `${it.title} ${it.author}` });
+      });
+      li.append(img, meta, del);
+      ul.append(li);
+    }
+    $('history-sync').textContent = window.LibrisHistory?.isSynced()
+      ? 'Enregistré sur cet appareil et sauvegardé en ligne.'
+      : 'Enregistré sur cet appareil.';
+  }
+
   // ---------- Dialogue infos ----------
   function openDialog() { $('info-dialog').showModal(); }
   function closeDialog() { const d = $('info-dialog'); if (d.open) d.close('cancel'); }
@@ -596,7 +804,14 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
       $('btn-quarter').classList.toggle('on', quarterTurns !== 0);
       haptic(10);
     });
-    $('zoom').addEventListener('input', (e) => { zoom = +e.target.value; freezeDirty = true; });
+    $('zoom').addEventListener('input', (e) => applyZoom(+e.target.value));
+    $('btn-torch').addEventListener('click', toggleTorch);
+    // Toucher l'image = faire le point là où on vise. Indispensable pour un
+    // code-barres tenu à 15 cm, que l'autofocus continu rate souvent.
+    $('scanner').addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, input, a, .sheet, dialog')) return;
+      focusAt(e.clientX, e.clientY);
+    });
 
     $('btn-freeze').addEventListener('click', toggleFreeze);
     $('btn-info').addEventListener('click', openDialog);
@@ -613,6 +828,17 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
       const dlg = $('info-dialog');
       setTimeout(() => { if (dlg.returnValue === 'ok') lookupFromInput(); }, 0);
     });
+    $('btn-history').addEventListener('click', openHistory);
+    $('history-handle').addEventListener('click', closeHistory);
+    $('btn-history-clear').addEventListener('click', () => {
+      if (confirm('Effacer tout l\'historique des livres scannés ?')) window.LibrisHistory?.clear();
+    });
+    // history.js est un module : il peut arriver après ce script.
+    const bindHistory = () => window.LibrisHistory
+      ? window.LibrisHistory.onChange(renderHistory)
+      : setTimeout(bindHistory, 200);
+    bindHistory();
+
     $('btn-start').addEventListener('click', startCamera);
     $('btn-retry').addEventListener('click', startCamera);
     window.addEventListener('resize', () => { applyTransform(); freezeDirty = true; });
@@ -623,5 +849,5 @@ const NBINS = 90;            // 1° par bin, orientation modulo 90°
   }
   document.addEventListener('DOMContentLoaded', init);
 
-  return { dismissSheet, lookup, scanBarcode, readTitle, _orientationOf: orientationOf };
+  return { dismissSheet, lookup, scanBarcode, readTitle, openHistory, _orientationOf: orientationOf };
 })();

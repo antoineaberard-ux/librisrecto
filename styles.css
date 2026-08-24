@@ -32,6 +32,22 @@ html, body {
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px;
   text-shadow: 0 1px 8px rgba(0,0,0,.7); }
 .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+.top-actions { display: flex; align-items: center; gap: 10px; }
+.icon-btn { border: none; width: 38px; height: 38px; border-radius: 50%; font-size: 18px;
+  background: rgba(0,0,0,.45); color: #fff; backdrop-filter: blur(8px); cursor: pointer;
+  transition: background .2s; }
+.icon-btn.on { background: var(--amber); }
+
+/* Anneau de mise au point : suit le doigt, disparaît tout seul */
+.focus-ring { position: absolute; z-index: 14; width: 74px; height: 74px; margin: -37px 0 0 -37px;
+  border: 2px solid var(--amber); border-radius: 50%; opacity: 0; pointer-events: none; }
+.focus-ring.pulse { animation: focus-pop .9s ease-out; }
+@keyframes focus-pop {
+  0% { opacity: 0; transform: scale(1.5); }
+  25% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
 .angle-badge { font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
   background: rgba(0,0,0,.45); color: var(--muted); backdrop-filter: blur(8px); }
 .angle-badge.active { color: #06210f; background: var(--green); }
@@ -83,10 +99,16 @@ html, body {
   border: 2.5px solid var(--amber); box-shadow: 0 0 0 2000px rgba(0,0,0,.28); }
 .scan-hud p { margin: 0; text-align: center; font-size: 15px;
   text-shadow: 0 1px 8px rgba(0,0,0,.8); }
+.scan-hud .scan-tip { font-size: 13px; color: var(--muted); }
 /* Pendant le scan, les commandes de redressement n'ont plus de sens et
    masquent le code-barres. */
-body.scanning .overlay, body.scanning .roi, body.scanning .cv-status {
+body.scanning .roi, body.scanning .cv-status, body.scanning .hint,
+body.scanning .controls, body.scanning .angle-badge {
   opacity: 0; pointer-events: none; transition: opacity .2s; }
+/* La lampe reste atteignable pendant le scan : c'est souvent ce qui débloque.
+   Le z-index doit monter sur .overlay lui-même — un enfant ne sort pas du
+   contexte d'empilement de son parent. */
+body.scanning .overlay { z-index: 26; }
 
 .cam-gate { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
   padding: 28px; background: radial-gradient(120% 80% at 50% 0%, #1a1a20 0%, var(--bg) 70%); }
@@ -129,6 +151,24 @@ a.pill { text-decoration: none; text-align: center; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .book-error { text-align: center; padding: 30px 10px; }
 .book-error h2 { margin: 0 0 8px; } .book-error p { color: var(--muted); margin: 0 0 18px; }
+
+/* Historique */
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 6px; }
+.history-head h2 { margin: 0; font-size: 20px; }
+.history-sync { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.history-item { display: flex; align-items: center; gap: 12px; background: var(--card);
+  border-radius: 14px; padding: 10px 12px; }
+.history-item img { width: 40px; height: 60px; object-fit: cover; border-radius: 6px;
+  background: #2b2b33; flex-shrink: 0; }
+.history-item .meta { min-width: 0; flex: 1; }
+.history-item .t { font-weight: 600; font-size: 15px; line-height: 1.25;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.history-item .a { color: var(--muted); font-size: 13px; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-item .del { border: none; background: none; color: var(--muted); font-size: 18px;
+  padding: 6px 4px; cursor: pointer; }
+.history-empty { color: var(--muted); text-align: center; padding: 30px 10px; margin: 0; }
 
 /* Dialog */
 .manual-dialog { border: none; border-radius: 20px; background: var(--sheet-bg); color: var(--ink);

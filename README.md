@@ -11,7 +11,8 @@ auteur, note et **synopsis** (Open Library / Google Books).
 
 ## Tester
 
-- **En ligne (iOS + Android)** : ouvrir l'URL GitHub Pages, puis « Ajouter à l'écran d'accueil ».
+- **En ligne (iOS + Android)** : https://librisrecto.web.app — puis « Ajouter à l'écran d'accueil ».
+- **Miroir de secours** : https://antoineaberard-ux.github.io/librisrecto/ (GitHub Pages).
 - **En local** : `python3 serve.py` → http://localhost:5180 (Chrome, webcam).
 - **Tests de la détection d'angle** : `node test/angle.test.mjs` (aucune dépendance).
 
@@ -35,6 +36,57 @@ votent aussi fort que les lignes de texte. Pour un **dos de livre vertical**
 (rayonnage), un appui sur **↻ 90°** suffit, et le réglage est conservé pour les
 livres suivants.
 
+## Caméra
+
+| Réglage | Détail |
+|---------|--------|
+| Mise au point | `focusMode: continuous` à l'ouverture ; **toucher l'image** pose un `pointsOfInterest` et déclenche un `single-shot` |
+| Lampe | bouton 💡 en haut, affiché seulement si la piste vidéo annonce `torch` |
+| Zoom | zoom **optique** du capteur quand il existe, sinon agrandissement CSS |
+| Résolution | 2560×1440 demandé ; les frames envoyées au décodeur ne sont **pas** réduites |
+
+Ces trois réglages passent par `applyConstraints`. **Android Chrome** les
+supporte ; **iOS Safari** n'en expose aucun, donc le bouton lampe reste masqué
+et la mise au point reste celle du système.
+
+## Scan ISBN
+
+Le décodeur reçoit en alternance un **recadrage de la bande visée à la
+résolution native** et la vue large. Réduire la frame avant de décoder est ce
+qui faisait échouer le scan en conditions réelles — mesuré sur des images
+floues, bruitées et peu contrastées comme en vrai :
+
+| flou | largeur du code-barres | recadrage natif | frame réduite en 0,625× |
+|------|------------------------|-----------------|--------------------------|
+| 0,8 px | 190 px | 5/5 | 0/5 |
+| 1,4 px | 247 px | 5/5 | 0/5 |
+| 2,0 px | 323 px | 5/5 | 0/5 |
+
+## Historique
+
+Les livres trouvés sont gardés **en local d'abord** (`localStorage`), puis
+synchronisés vers Firestore sous une **connexion anonyme**.
+
+L'identité anonyme appartient à l'appareil **et** au navigateur : l'historique
+n'est donc **pas** partagé entre le téléphone et l'ordinateur. Le faire
+demanderait un vrai compte (lien e-mail), volontairement écarté pour ne
+collecter aucune donnée personnelle.
+
+Données envoyées : titre, auteur, ISBN, année, URL de couverture, date. Aucun
+identifiant de personne, aucune position, aucune image. Les règles Firestore
+(`firestore.rules`) enferment chaque identité dans sa propre collection.
+
+Si Firestore est injoignable ou désactivé, l'app continue en local sans rien
+signaler.
+
+## Déploiement
+
+```
+firebase deploy --only hosting          # https://librisrecto.web.app
+firebase deploy --only firestore        # règles de sécurité
+git push origin main                    # miroir GitHub Pages
+```
+
 ## Pile
 
 | Fonction | Techno |
@@ -44,7 +96,9 @@ livres suivants.
 | Lecture du titre | [Tesseract.js](https://tesseract.projectnaptha.com/) `fra+eng`, chargé à la demande |
 | Scan ISBN | `BarcodeDetector` natif, repli [ZXing](https://github.com/zxing-js/library) |
 | Métadonnées / synopsis | Open Library API · Google Books API |
-| Hors-ligne / installable | Service Worker + Web App Manifest |
+| Hors-ligne / installable | Service Worker (réseau d'abord) + Web App Manifest |
+| Hébergement | Firebase Hosting |
+| Historique | localStorage + Firestore, connexion anonyme |
 
 Tesseract et ZXing ne sont téléchargés qu'au premier usage du bouton
 correspondant : le démarrage de l'app ne dépend d'aucun CDN.
