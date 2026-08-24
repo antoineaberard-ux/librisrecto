@@ -23,21 +23,25 @@
     <canvas id="freeze" class="freeze" hidden></canvas>
     <canvas id="work" hidden></canvas>
 
+    <!-- Cadre de visée : délimite exactement la zone analysée -->
+    <div id="roi" class="roi" hidden><span></span><span></span><span></span><span></span></div>
+
     <div class="overlay">
       <header class="top-bar">
         <div class="brand"><span class="dot"></span> LibrisRecto</div>
         <div id="angle-badge" class="angle-badge">—</div>
       </header>
 
-      <p id="hint" class="hint">Visez un livre incliné — le titre se redresse tout seul</p>
+      <p id="hint" class="hint">Cadrez le livre — le titre se redresse tout seul</p>
 
       <footer class="controls">
         <div class="row fine">
           <span class="ico">↻</span>
           <input id="rotate-fine" class="slider" type="range" min="-90" max="90" step="1" value="0" aria-label="Rotation manuelle" />
-          <button id="btn-reset" class="mini" title="Auto">Auto</button>
+          <button id="btn-quarter" class="mini" title="Quart de tour (dos de livre vertical)">↻ 90°</button>
+          <button id="btn-reset" class="mini on" title="Redressement automatique">Auto</button>
         </div>
-        <div id="zoom-row" class="row zoom" hidden>
+        <div id="zoom-row" class="row zoom">
           <span class="ico">🔍</span>
           <input id="zoom" class="slider" type="range" min="1" max="4" step="0.1" value="1" aria-label="Zoom" />
         </div>
@@ -46,6 +50,13 @@
           <button id="btn-info" class="pill">ℹ️ Infos livre</button>
         </div>
       </footer>
+    </div>
+
+    <!-- HUD de scan code-barres (vue non pivotée) -->
+    <div id="scan-hud" class="scan-hud" hidden>
+      <p id="scan-msg">Visez le code-barres…</p>
+      <div class="scan-frame"></div>
+      <button id="btn-scan-cancel" class="pill light">Annuler</button>
     </div>
 
     <div id="cam-gate" class="cam-gate" hidden>
@@ -64,7 +75,7 @@
       <button id="btn-retry" class="pill light">Réessayer</button>
     </div>
 
-    <div id="cv-status" class="cv-status">Visez un livre incliné pour le redresser</div>
+    <div id="cv-status" class="cv-status">Cadrez le livre dans le rectangle — ↻&nbsp;90° si le dos est vertical</div>
   </main>
 
   <!-- Bottom Sheet Synopsis (secondaire) -->
@@ -98,8 +109,9 @@
   <dialog id="info-dialog" class="manual-dialog">
     <form method="dialog" id="info-form">
       <h2>Infos du livre</h2>
-      <p class="dim">Scan du code-barres ISBN, ou saisie manuelle.</p>
-      <button id="btn-scan-isbn" type="button" class="pill solid block">📷 Scanner l'ISBN (dos)</button>
+      <p class="dim">Lecture du titre, scan du code-barres ISBN, ou saisie manuelle.</p>
+      <button id="btn-read-title" type="button" class="pill solid block">🔤 Lire le titre (OCR)</button>
+      <button id="btn-scan-isbn" type="button" class="pill block">📷 Scanner l'ISBN (dos)</button>
       <div class="or">ou</div>
       <input id="manual-input" type="text" inputmode="search" placeholder="ISBN ou titre / auteur" autocomplete="off" />
       <div class="manual-actions">
@@ -109,7 +121,6 @@
     </form>
   </dialog>
 
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
