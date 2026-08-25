@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-08-25 10:58';
+const LIBRIS_VERSION = '2026-08-25 15:40';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -615,12 +615,13 @@ const LibrisRecto = (() => {
         // souvent le texte est là mais trop peu sûr pour servir de titre.
         return showError(lastOcrText
           ? `Titre non reconnu. Lu : « ${lastOcrText.slice(0, 80)} ». Figez l'image et rapprochez-vous.`
-          : "Aucun texte détecté. Figez l'image, rapprochez-vous, puis réessayez.");
+          : "Aucun texte détecté. Figez l'image, rapprochez-vous, puis réessayez.",
+          { text: lastOcrText });
       }
       showLoading(`Recherche « ${title} »…`);
       const book = await byQuery(title);
       if (book) renderBook({ ...book, isbn: book.isbn || '' });
-      else showError(`Aucune correspondance pour « ${title} ».`);
+      else showError(`Aucune correspondance pour « ${title} » dans les catalogues.`, { text: title });
     } catch (err) {
       showError(/CDN|Failed|import/.test(String(err.message))
         ? 'Lecture du titre indisponible : connexion requise au premier usage.'
@@ -648,6 +649,19 @@ const LibrisRecto = (() => {
       .slice(0, 90);
   }
 
+  /* Un catch vide transforme une faute de programmation en panne muette : une
+     ReferenceError dans la chaîne de recherche faisait silencieusement tomber
+     l'app sur la source suivante. On garde toujours la trace, visible dans le
+     diagnostic. */
+  function noteIncident(source, err) {
+    const msg = `${source} : ${err?.message || err}`;
+    window.__librisIncidents = (window.__librisIncidents || []).slice(-4).concat(msg);
+    // Une erreur de code n'est pas une panne réseau : elle doit remonter.
+    if (err instanceof ReferenceError || err instanceof TypeError) {
+      window.__librisLastError = msg;
+    }
+  }
+
   // ---------- Recherche du livre ----------
   function lookupFromInput() {
     const val = $('manual-input').value.trim();
@@ -662,8 +676,11 @@ const LibrisRecto = (() => {
     try {
       const book = q.isbn ? await byISBN(q.isbn) : await byQuery(q.text);
       if (book) renderBook({ ...book, isbn: q.isbn || book.isbn || '' });
-      else showError(q.isbn ? `Aucun livre pour l'ISBN ${q.isbn}.` : 'Aucune correspondance.');
-    } catch { showError('Erreur réseau.'); }
+      else showError(
+        q.isbn ? `Aucun livre pour l'ISBN ${q.isbn} dans les catalogues.`
+               : 'Aucune correspondance dans les catalogues.',
+        { isbn: q.isbn, text: q.text });
+    } catch { showError('Erreur réseau.', { isbn: q.isbn, text: q.text }); }
   }
   async function byISBN(isbn) {
     try {
@@ -680,16 +697,20 @@ const LibrisRecto = (() => {
   async function byQuery(text) {
     try {
       const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(text)}&maxResults=1`);
-      const j = await r.json(); if (j.items?.length) return mapG(j.items[0]);
-      // j.error : le quota anonyme de Google Books est par IP et vite atteint.
-    } catch { /* repli Open Library */ }
+      const j = await r.json();
+      if (j.items?.length) return mapG(j.items[0]);
+      // Le quota anonyme de Google Books est par adresse IP et souvent épuisé :
+      // un 429 n'est pas une exception, il faut le repérer explicitement.
+      if (j.error) noteIncident('Google Books', { message: `${j.error.code} quota` });
+    } catch (e) { noteIncident('Google Books', e); }
     try {
       const r = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(text)}&limit=1`);
       const j = await r.json();
       if (j.docs?.length) return await mapOLSearch(j.docs[0]);
-    } catch { /* rien trouvé */ }
-    return null;
+    } catch (e) { noteIncident('Open Library', e); }
+    return byBnf(text);
   }
+
   async function mapOLSearch(d) {
     let synopsis = 'Synopsis non disponible.';
     try {
@@ -697,7 +718,7 @@ const LibrisRecto = (() => {
       const w = await r.json();
       const desc = typeof w.description === 'string' ? w.description : w.description?.value;
       if (desc) synopsis = desc;
-    } catch { /* pas de résumé */ }
+    } catch { /* pas de résumé, le reste de la fiche suffit */ }
     return {
       title: d.title || 'Sans titre',
       author: (d.author_name || []).join(', ') || 'Auteur inconnu',
@@ -708,6 +729,38 @@ const LibrisRecto = (() => {
       synopsis
     };
   }
+
+  /* Catalogue de la Bibliothèque nationale de France. Gratuit, sans clé, et
+     bien plus complet que Google Books ou Open Library sur le fonds français —
+     ce qui compte ici, l'OCR lisant surtout des titres en français.
+     Son index ISBN ne répond pas, d'où l'usage en recherche titre seule. */
+  async function byBnf(text) {
+    try {
+      const query = `bib.title all "${text.replace(/"/g, '')}"`;
+      const url = 'https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve'
+        + `&query=${encodeURIComponent(query)}&recordSchema=dublincore&maximumRecords=1`;
+      const xml = await (await fetch(url)).text();
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      const champ = (nom) => {
+        for (const el of doc.getElementsByTagName('*')) {
+          if (el.localName === nom && el.textContent.trim()) return el.textContent.trim();
+        }
+        return '';
+      };
+      const title = champ('title');
+      if (!title) return null;
+      return {
+        title: title.split(' / ')[0].slice(0, 300),
+        author: (champ('creator') || 'Auteur inconnu').slice(0, 200),
+        rating: null,
+        year: (champ('date') || '').match(/\d{4}/)?.[0],
+        pages: null,
+        cover: '',
+        synopsis: champ('description') || 'Synopsis non disponible — fiche BnF.'
+      };
+    } catch (e) { noteIncident('BnF', e); return null; }
+  }
+
   function mapOL(d, isbn) {
     return {
       title: d.title || 'Sans titre',
@@ -744,15 +797,42 @@ const LibrisRecto = (() => {
       ? '★'.repeat(Math.round(b.rating)) + '☆'.repeat(5 - Math.round(b.rating)) : '';
     $('book-extra').textContent = [b.year, b.pages ? `${b.pages} pages` : null].filter(Boolean).join(' · ');
     $('book-synopsis').textContent = b.synopsis;
+    renderLinks($('book-links'), { isbn: b.isbn, text: `${b.title} ${b.author}` });
   }
   function showLoading(m) {
     $('book').hidden = true; $('book-error').hidden = true;
     $('loading-msg').textContent = m; $('sheet-loading').hidden = false;
   }
-  function showError(m) {
+  function showError(m, recherche) {
     $('sheet-loading').hidden = true; $('book').hidden = true;
     $('book-error').hidden = false; $('book-error-msg').textContent = m;
+    renderLinks($('error-links'), recherche || {});
   }
+  /* Cultura et Babelio refusent les requêtes d'un navigateur tiers (CORS), et
+     l'API d'Amazon exige un compte partenaire et une clé secrète, impossible à
+     employer depuis une page web. Le seul pont honnête est donc un lien de
+     recherche que l'utilisateur ouvre lui-même. Il est proposé dans tous les
+     cas, y compris en échec : c'est souvent là qu'il sert le plus. */
+  function renderLinks(container, { isbn, text }) {
+    const terme = (isbn || text || '').trim();
+    container.textContent = '';
+    if (!terme) { container.hidden = true; return; }
+    container.hidden = false;
+    const cibles = [
+      ['Cultura', `https://www.cultura.com/search?q=${encodeURIComponent(terme)}`],
+      ['Amazon', `https://www.amazon.fr/s?k=${encodeURIComponent(terme)}`],
+      ['Babelio', `https://www.babelio.com/resrecherche.php?Recherche=${encodeURIComponent(terme)}`],
+      ['Google', `https://www.google.com/search?q=${encodeURIComponent(terme + ' livre')}`]
+    ];
+    for (const [nom, url] of cibles) {
+      const a = document.createElement('a');
+      a.className = 'shop-link';
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = nom;
+      container.append(a);
+    }
+  }
+
   function openSheet() { sheet.classList.add('open'); sheet.setAttribute('aria-hidden', 'false'); }
   function dismissSheet() { sheet.classList.remove('open', 'full'); sheet.setAttribute('aria-hidden', 'true'); }
   function setupSheet() {
@@ -853,6 +933,8 @@ const LibrisRecto = (() => {
     lines.push(['Historique', window.LibrisHistory?.isSynced() ? 'synchronisé' : 'local seulement']);
     lines.push(['Installée', window.matchMedia('(display-mode: standalone)').matches ? 'oui' : 'non (onglet)']);
     lines.push(['Dernière erreur', window.__librisLastError || 'aucune']);
+    const inc = window.__librisIncidents || [];
+    if (inc.length) lines.push(['Sources en échec', inc.join(' · ').slice(0, 160)]);
 
     const ul = $('diag-list');
     ul.textContent = '';

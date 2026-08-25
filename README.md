@@ -153,7 +153,7 @@ git push origin main                    # miroir GitHub Pages
 | Caméra (iOS + Android) | getUserMedia + rotation CSS (GPU) |
 | Lecture du titre | [Tesseract.js](https://tesseract.projectnaptha.com/) `fra+eng`, chargé à la demande |
 | Scan ISBN | `BarcodeDetector` natif, repli [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) |
-| Métadonnées / synopsis | Open Library API · Google Books API |
+| Métadonnées / synopsis | Open Library · Google Books · catalogue BnF |
 | Hors-ligne / installable | Service Worker (réseau d'abord) + Web App Manifest |
 | Hébergement | Firebase Hosting |
 | Historique | localStorage + Firestore, connexion anonyme |
@@ -161,8 +161,26 @@ git push origin main                    # miroir GitHub Pages
 Tesseract et ZXing ne sont téléchargés qu'au premier usage du bouton
 correspondant : le démarrage de l'app ne dépend d'aucun CDN.
 
-Le quota anonyme de Google Books est par adresse IP et vite atteint : les
-recherches par texte basculent automatiquement sur Open Library.
+## Trouver le livre
+
+Trois catalogues sont interrogés dans l'ordre, chacun rattrapant les trous du
+précédent :
+
+| Source | Rôle |
+|--------|------|
+| Google Books | premier essai — mais son quota anonyme est **par adresse IP** et souvent déjà épuisé (429) |
+| Open Library | couverture large, avec image de couverture |
+| Catalogue BnF | dernier recours, bien plus complet sur le fonds français ; son index ISBN ne répond pas, il n'est donc interrogé que par titre |
+
+Chaque fiche, **et chaque échec**, propose des liens de recherche vers
+**Cultura**, **Amazon**, **Babelio** et Google, remplis avec l'ISBN scanné ou le
+texte lu. C'est le seul pont possible : Cultura et Babelio refusent les requêtes
+d'un navigateur tiers, et l'API d'Amazon exige un compte partenaire et une clé
+secrète, impossible à employer depuis une page web sans l'exposer.
+
+Aucun `catch` ne reste muet : un incident de source est enregistré et affiché
+dans le diagnostic. Un `catch` vide avait déjà transformé une faute de
+programmation en panne silencieuse.
 
 ## Limites & suite native
 

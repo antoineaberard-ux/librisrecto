@@ -219,6 +219,15 @@ body.scanning .install-banner { opacity: 0; pointer-events: none; }
   padding: 6px 4px; cursor: pointer; }
 .history-empty { color: var(--muted); text-align: center; padding: 30px 10px; margin: 0; }
 
+/* Liens libraires */
+.shop-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+.shop-links[hidden] { display: none; }
+.shop-link { text-decoration: none; font-size: 14px; font-weight: 600;
+  padding: 10px 16px; border-radius: 999px;
+  background: var(--card); color: var(--ink); border: 1px solid rgba(255,255,255,.09); }
+.error-hint { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
+.book-error .shop-links { justify-content: center; margin-bottom: 22px; }
+
 /* Panneau « Infos livre » */
 .info-title { margin: 4px 0 6px; font-size: 21px; }
 .info-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 18px; }

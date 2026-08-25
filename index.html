@@ -118,10 +118,14 @@
         </div>
         <h3 class="synopsis-label">Synopsis</h3>
         <p id="book-synopsis" class="synopsis">—</p>
+        <h3 class="synopsis-label">Trouver ce livre</h3>
+        <div id="book-links" class="shop-links" hidden></div>
       </article>
       <div id="book-error" class="book-error" hidden>
         <h2>Livre introuvable</h2>
         <p id="book-error-msg">Aucune correspondance.</p>
+        <p class="error-hint">Chercher chez un libraire avec ce que l'app a lu :</p>
+        <div id="error-links" class="shop-links" hidden></div>
         <button class="pill light" onclick="LibrisRecto.dismissSheet()">Fermer</button>
       </div>
     </div>
