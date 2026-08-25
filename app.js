@@ -17,24 +17,30 @@ const LibrisRecto = (() => {
   const video = $('video'), stage = $('stage'), work = $('work');
   const freezeCanvas = $('freeze'), badge = $('angle-badge'), sheet = $('sheet');
 
-  const DEG = 180 / Math.PI;
   const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-  const CDN_ZXING = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+  // @zxing/library (portage JS) a été abandonné : son API decodeFromCanvas
+  // n'existe pas, et il décroche dès le moindre flou. zxing-wasm est le ZXing
+  // C++ compilé — mesuré : il lit là où le portage JS échoue.
+  const CDN_ZXING_WASM = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.3/dist/es/reader/index.js';
   const CDN_TESSERACT = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
   // Zone d'analyse : fraction de la surface visible (pas de la frame brute,
   // qui est recadrée par object-fit:cover). Doit coller au cadre affiché.
   const ROI_W = 0.80, ROI_H = 0.52;   // cadre de visée = zone d'analyse d'angle
   const OCR_W = 0.94, OCR_H = 0.86;   // l'OCR ratisse plus large : le titre déborde souvent du cadre
+  // Ce qui compte pour l'OCR, c'est la LARGEUR : le texte court dessus. Plafonner
+  // le côté long écrasait la largeur à 555 px sur une capture portrait, rendant
+  // le titre illisible. Le plafond en pixels reste un filet de sécurité.
+  const OCR_MAX_WIDTH = 1000;
+  const OCR_MAX_PIXELS = 1.8e6;
   const ANALYSIS_W = 224;      // largeur d'analyse (perf)
   const EST_PERIOD = 110;      // ms entre deux estimations (~9 fps)
-  // Orientation repliée modulo 90° : les lignes de texte, les jambages des
-  // lettres et les bords de la couverture sont tous alignés sur les mêmes axes,
-  // donc ils votent tous dans le même bin. Décider LEQUEL des deux axes porte le
-  // titre est peu fiable sur une vignette de 224 px ; on applique donc la
-  // rotation minimale (< 45°) et le bouton quart de tour couvre les dos verticaux.
-  const NBINS = 90;            // 1° par bin, orientation modulo 90°
+  // Le redressement est modulo 90° : les lignes de texte, les jambages des
+  // lettres et les bords de la couverture sont tous alignés sur les mêmes axes.
+  // Décider LEQUEL des deux axes porte le titre est peu fiable sur une vignette,
+  // on applique donc la rotation minimale (< 45°) et le bouton quart de tour
+  // couvre les dos de livre verticaux. Détail de l'algorithme : angle-worker.js
 
   let stream = null, running = false;
   let dispAngle = 0;           // orientation détectée, lissée (continue, non bornée)
@@ -46,7 +52,7 @@ const LibrisRecto = (() => {
   let freezeDirty = false;     // l'image figée ne se redessine que si l'angle/zoom bouge
   let scanMode = false;        // scan code-barres : on affiche la vue non pivotée
   let lastEstimate = 0;
-  let zxingReader = null, ocrWorker = null, cancelScan = null;
+  let ocrWorker = null, cancelScan = null;
   let track = null, caps = {}, torchOn = false;   // piste vidéo et ses capacités matérielles
   let focusRingTimer = 0;
   const scanCanvas = document.createElement('canvas');
@@ -78,6 +84,7 @@ const LibrisRecto = (() => {
       $('roi').hidden = false;
       running = true;
       setupTrack();
+      startWorker();
     } catch (err) {
       const denied = /NotAllowed|Permission/i.test(String(err));
       showNoCam(denied ? 'Caméra refusée. Autorisez-la puis réessayez.' : 'Caméra inaccessible.');
@@ -198,81 +205,52 @@ const LibrisRecto = (() => {
   }
 
   // ---------- Estimation de l'inclinaison ----------
-  const hist = new Float32Array(NBINS);
-  const smoothed = new Float32Array(NBINS);
-  const KERNEL = [0.06, 0.24, 0.40, 0.24, 0.06];   // ~2° de lissage circulaire
+  // Le détecteur vit dans angle-worker.js. Le faire tourner ici imposait un
+  // getImageData synchrone à 9 Hz, qui bloque le compositeur : c'était la cause
+  // des à-coups de la rotation.
+  let worker = null, workerBusy = false, workerSeq = 0;
+  let estimatorCanvas = null, estimatorCtx = null;
 
-  function estimateAngle() {
-    const g = roiGeometry(video.videoWidth, video.videoHeight);
-    if (!g) return;
-
-    const W = ANALYSIS_W, H = Math.max(8, Math.round(g.sh / g.sw * ANALYSIS_W));
-    work.width = W; work.height = H;
-    const ctx = work.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, g.sx, g.sy, g.sw, g.sh, 0, 0, W, H);
-    const px = ctx.getImageData(0, 0, W, H).data;
-
-    const found = orientationOf(px, W, H);
-    if (found === null) { setLock(false, 'Cherche un livre…'); return; }
-    targetAngle = found;
-    setLock(true, null);
+  function startWorker() {
+    try {
+      worker = new Worker('angle-worker.js');
+      worker.onmessage = (e) => {
+        workerBusy = false;
+        if (e.data.angle === null) { setLock(false, 'Cherche un livre…'); return; }
+        targetAngle = e.data.angle;
+        setLock(true, null);
+      };
+      worker.onerror = () => { worker = null; };
+    } catch { worker = null; }
   }
 
-  /* Coeur de la détection, isolé du DOM pour être testable.
-     Rend l'inclinaison des structures dominantes en degrés dans (-45, 45],
-     ou null si la scène n'a pas de direction franche. */
-  function orientationOf(px, W, H) {
-    const lum = new Float32Array(W * H);
-    for (let i = 0, p = 0; p < lum.length; i += 4, p++)
-      lum[p] = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
+  async function estimateAngle() {
+    if (!worker || workerBusy) return;
+    const g = roiGeometry(video.videoWidth, video.videoHeight);
+    if (!g) return;
+    const W = ANALYSIS_W, H = Math.max(8, Math.round(g.sh / g.sw * ANALYSIS_W));
+    workerBusy = true;
+    const id = ++workerSeq;
 
-    hist.fill(0);
-    const mags = new Float32Array(W * H), oris = new Float32Array(W * H);
-    let magSum = 0, magCount = 0;
-
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        const i = y * W + x;
-        const gx = -lum[i - 1 - W] - 2 * lum[i - 1] - lum[i - 1 + W]
-                 + lum[i + 1 - W] + 2 * lum[i + 1] + lum[i + 1 + W];
-        const gy = -lum[i - W - 1] - 2 * lum[i - W] - lum[i - W + 1]
-                 + lum[i + W - 1] + 2 * lum[i + W] + lum[i + W + 1];
-        const m = Math.hypot(gx, gy);
-        mags[i] = m; magSum += m; magCount++;
-        // Orientation du CONTOUR = direction du gradient + 90°, repliée sur [0,90).
-        let o = Math.atan2(gy, gx) * DEG + 90;
-        o %= 90; if (o < 0) o += 90;
-        oris[i] = o;
-      }
+    // createImageBitmap redimensionne hors du thread principal et le résultat
+    // est transférable : rien ne transite par le CPU côté page.
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(video, g.sx, g.sy, g.sw, g.sh,
+          { resizeWidth: W, resizeHeight: H, resizeQuality: 'low' });
+        worker.postMessage({ id, bitmap }, [bitmap]);
+        return;
+      } catch { /* Safari ancien : repli ci-dessous */ }
     }
 
-    // Seuil adaptatif : un dos mat et une couverture glacée en plein soleil
-    // n'ont pas du tout les mêmes amplitudes de gradient.
-    const threshold = Math.max(20, (magSum / Math.max(1, magCount)) * 1.9);
-    let votes = 0, total = 0;
-    for (let i = 0; i < mags.length; i++) {
-      const m = mags[i];
-      if (m < threshold) continue;
-      let b = Math.round(oris[i]); if (b >= NBINS) b -= NBINS;
-      hist[b] += m; total += m; votes++;
+    if (!estimatorCanvas) {
+      estimatorCanvas = document.createElement('canvas');
+      estimatorCtx = estimatorCanvas.getContext('2d', { willReadFrequently: true });
     }
-    if (votes < 250) return null;
-
-    for (let b = 0; b < NBINS; b++) {
-      let acc = 0;
-      for (let k = -2; k <= 2; k++) acc += hist[(b + k + NBINS) % NBINS] * KERNEL[k + 2];
-      smoothed[b] = acc;
-    }
-
-    let peak = 0;
-    for (let b = 1; b < NBINS; b++) if (smoothed[b] > smoothed[peak]) peak = b;
-    // Pic à peine au-dessus du bruit = scène sans direction dominante.
-    if (smoothed[peak] < (total / NBINS) * 2.0) return null;
-
-    // Interpolation parabolique circulaire : précision sous le degré.
-    const l = smoothed[(peak - 1 + NBINS) % NBINS], c = smoothed[peak], r = smoothed[(peak + 1) % NBINS];
-    const denom = l - 2 * c + r;
-    return wrap90(peak + (denom !== 0 ? 0.5 * (l - r) / denom : 0));
+    estimatorCanvas.width = W; estimatorCanvas.height = H;
+    estimatorCtx.drawImage(video, g.sx, g.sy, g.sw, g.sh, 0, 0, W, H);
+    const data = estimatorCtx.getImageData(0, 0, W, H).data;
+    worker.postMessage({ id, data: data.buffer, width: W, height: H }, [data.buffer]);
   }
 
   function setLock(ok, text) {
@@ -310,10 +288,16 @@ const LibrisRecto = (() => {
     requestAnimationFrame(loop);
     if (!running) return;
 
+    fps.frames++;
+    if (performance.now() - fps.since >= 1000) {
+      fps.value = fps.frames;
+      fps.frames = 0; fps.since = performance.now();
+    }
+
     const now = performance.now();
     if (!frozen && !scanMode && useAuto && now - lastEstimate > EST_PERIOD) {
       lastEstimate = now;
-      try { estimateAngle(); } catch { /* frame pas encore prête */ }
+      estimateAngle();          // asynchrone : la boucle n'attend pas
     }
     // Lissage par frame : la rotation suit la main sans à-coups.
     const d = angDiff(targetAngle, dispAngle);
@@ -374,17 +358,30 @@ const LibrisRecto = (() => {
     const { src, vw, vh } = currentSource();
     const g = roiGeometry(vw, vh, OCR_W, OCR_H);
     if (!g) return null;
-    const out = document.createElement('canvas');
+
     const pad = 1.2;   // marge pour ne pas rogner les coins après rotation
-    out.width = Math.round(g.sw * pad); out.height = Math.round(g.sh * pad);
+    const fullW = g.sw * pad, fullH = g.sh * pad;
+    // Mesuré : une capture de 3,5 Mpx met Tesseract à genoux, plusieurs secondes
+    // ici et bien davantage sur téléphone, sans rien lire de plus. L'étirement de
+    // contraste qui suit coûte lui aussi proportionnellement au nombre de pixels,
+    // et sur le thread principal.
+    const shrink = Math.min(1,
+      OCR_MAX_WIDTH / fullW,
+      Math.sqrt(OCR_MAX_PIXELS / (fullW * fullH)));
+
+    const out = document.createElement('canvas');
+    out.width = Math.round(fullW * shrink);
+    out.height = Math.round(fullH * shrink);
     const ctx = out.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, out.width, out.height);
     ctx.translate(out.width / 2, out.height / 2);
     ctx.rotate(currentAngle() * Math.PI / 180);
+    ctx.scale(shrink, shrink);
     ctx.drawImage(src, g.sx, g.sy, g.sw, g.sh, -g.sw / 2, -g.sh / 2, g.sw, g.sh);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return boostContrast(out, ctx);
   }
+
   // Niveaux de gris + étirement sur les percentiles 2/98 : Tesseract décroche
   // vite sur une couverture peu contrastée ou surexposée.
   function boostContrast(canvas, ctx) {
@@ -436,6 +433,7 @@ const LibrisRecto = (() => {
     let timer = 0;
     try {
       const decode = await pickDecoder();
+      lastDecoder = decode.moteur;
       const code = await new Promise((resolve, reject) => {
         timer = setTimeout(() => { cancelScan?.(); reject(new Error('timeout')); }, 30000);
         pumpFrames(decode).then(resolve, reject);
@@ -483,8 +481,7 @@ const LibrisRecto = (() => {
     const sw = Math.round((b.x - a.x) * vw), sh = Math.round((b.y - a.y) * vh);
     if (sw < 40 || sh < 20) return null;
     scanCanvas.width = sw; scanCanvas.height = sh;
-    scanCanvas.getContext('2d', { willReadFrequently: true })
-      .drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    scanCanvas.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
     return scanCanvas;
   }
 
@@ -498,8 +495,7 @@ const LibrisRecto = (() => {
     if (!vw) return null;
     const scale = Math.min(1, maxWidth / vw);
     fullCanvas.width = Math.round(vw * scale); fullCanvas.height = Math.round(vh * scale);
-    fullCanvas.getContext('2d', { willReadFrequently: true })
-      .drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+    fullCanvas.getContext('2d').drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
     return fullCanvas;
   }
 
@@ -530,27 +526,37 @@ const LibrisRecto = (() => {
   }
 
   async function pickDecoder() {
+    // BarcodeDetector est natif et reste le plus tolérant au flou : mesuré, il
+    // lit encore à 1,8 px de flou là où zxing-wasm s'arrête vers 1,0.
     if ('BarcodeDetector' in window) {
       const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
       const supported = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
       const formats = wanted.filter((f) => supported.includes(f));
       if (formats.length) {
         const detector = new window.BarcodeDetector({ formats });
-        return { decode: async (src) => (await detector.detect(src))[0]?.rawValue, maxWidth: Infinity };
+        return {
+          moteur: 'BarcodeDetector',
+          decode: async (src) => (await detector.detect(src))[0]?.rawValue,
+          maxWidth: Infinity
+        };
       }
     }
-    if (!window.ZXing) await loadScript(CDN_ZXING);
-    const Z = window.ZXing;
-    // Sans restriction de format, ZXing teste vingt symbologies par frame.
-    const hints = new Map();
-    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,
-      [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E]);
-    hints.set(Z.DecodeHintType.TRY_HARDER, true);
-    if (!zxingReader) zxingReader = new Z.BrowserMultiFormatReader(hints);
-    else zxingReader.hints = hints;
-    // decodeFromCanvas : on garde la main sur le flux. decodeFromVideoElement
-    // impose reset(), qui coupe les pistes du MediaStream et tue la caméra.
-    return { decode: async (src) => zxingReader.decodeFromCanvas(src)?.getText(), maxWidth: 1920 };
+    // Safari n'a pas BarcodeDetector : c'est ce chemin que prennent les iPhone.
+    const { readBarcodes } = await import(CDN_ZXING_WASM);
+    const options = {
+      formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E'],
+      tryHarder: true, tryRotate: true, tryInvert: true, maxNumberOfSymbols: 1
+    };
+    return {
+      moteur: 'zxing-wasm',
+      decode: async (src) => {
+        const ctx = src.getContext('2d', { willReadFrequently: true });
+        const image = ctx.getImageData(0, 0, src.width, src.height);
+        const found = await readBarcodes(image, options);
+        return found.length ? found[0].text : undefined;
+      },
+      maxWidth: 1600
+    };
   }
 
   function showScanHud(msg) {
@@ -570,28 +576,44 @@ const LibrisRecto = (() => {
     try {
       const shot = captureUpright();
       if (!shot) throw new Error('frame');
+      lastShot = shot;      // visible dans le diagnostic : « voici ce que l'OCR a vu »
       if (!window.Tesseract) {
         showLoading('Téléchargement du moteur OCR (première fois)…');
         await loadScript(CDN_TESSERACT);
       }
       if (!ocrWorker) {
         showLoading('Chargement des dictionnaires FR + EN…');
-        ocrWorker = await window.Tesseract.createWorker('fra+eng');
+        // Sans compte-rendu de progression, la lecture passe pour un plantage :
+        // elle prend plusieurs secondes, davantage sur un téléphone.
+        ocrWorker = await window.Tesseract.createWorker('fra+eng', 1, {
+          logger: (m) => {
+            if (m.status !== 'recognizing text') return;
+            showLoading(`Lecture du titre… ${Math.round((m.progress || 0) * 100)} %`);
+          }
+        });
       }
-      showLoading('Lecture du titre…');
+      showLoading('Lecture du titre… 0 %');
       const { data } = await ocrWorker.recognize(shot);
+      lastOcrText = (data.text || '').replace(/\s+/g, ' ').trim();
       const title = pickTitle(data);
-      if (!title) return showError('Titre illisible. Rapprochez-vous, stabilisez, puis réessayez.');
+      if (!title) {
+        // Montrer ce qui a été lu vaut mieux qu'un « illisible » opaque :
+        // souvent le texte est là mais trop peu sûr pour servir de titre.
+        return showError(lastOcrText
+          ? `Titre non reconnu. Lu : « ${lastOcrText.slice(0, 80)} ». Figez l'image et rapprochez-vous.`
+          : "Aucun texte détecté. Figez l'image, rapprochez-vous, puis réessayez.");
+      }
       showLoading(`Recherche « ${title} »…`);
       const book = await byQuery(title);
-      if (book) renderBook(book);
+      if (book) renderBook({ ...book, isbn: book.isbn || '' });
       else showError(`Aucune correspondance pour « ${title} ».`);
     } catch (err) {
-      showError(/CDN|Failed/.test(String(err.message))
+      showError(/CDN|Failed|import/.test(String(err.message))
         ? 'Lecture du titre indisponible : connexion requise au premier usage.'
         : 'Lecture du titre impossible sur cette image.');
     }
   }
+
   // Sur une couverture, le titre est le texte le plus GRAND, pas le premier.
   function pickTitle(data) {
     const lines = (data.lines || []).map((l) => ({
@@ -599,7 +621,7 @@ const LibrisRecto = (() => {
       conf: l.confidence || 0,
       top: l.bbox ? l.bbox.y0 : 0,
       height: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0
-    })).filter((l) => l.conf > 55 && /[A-Za-zÀ-ÿ]{3}/.test(l.text));
+    })).filter((l) => l.conf > 35 && /[A-Za-zÀ-ÿ]{3}/.test(l.text));
     if (!lines.length) return null;
     const best = lines.slice().sort((a, b) => b.height * b.conf - a.height * a.conf)[0];
     // Un titre déborde souvent sur deux lignes de même corps : on les recolle.
@@ -779,6 +801,79 @@ const LibrisRecto = (() => {
       : 'Enregistré sur cet appareil.';
   }
 
+  // ---------- Diagnostic ----------
+  // Sans cet écran, « ça ne marche pas » depuis un téléphone n'est pas
+  // vérifiable : capacités caméra et moteur de décodage varient énormément
+  // d'un appareil et d'un navigateur à l'autre.
+  let fps = { frames: 0, since: performance.now(), value: 0 };
+  let lastDecoder = '—';
+  let lastShot = null;      // dernière image envoyée à l'OCR, montrée au diagnostic
+  let lastOcrText = '';     // ce que l'OCR a réellement lu, même si on l'a rejeté
+
+  async function openDiag() {
+    closeDialog();
+    const lines = [];
+    const yes = (v) => (v ? 'oui' : 'non');
+
+    lines.push(['Écran', `${window.innerWidth}×${window.innerHeight} @${DPR}x`]);
+    lines.push(['Caméra', video.videoWidth ? `${video.videoWidth}×${video.videoHeight}` : 'non démarrée']);
+    lines.push(['Affichage', `${fps.value} img/s`]);
+    lines.push(['Détecteur d\'angle', worker ? 'worker actif' : 'indisponible']);
+    lines.push(['Angle détecté', locked ? `${(-dispAngle).toFixed(1)}°` : 'pas de verrou']);
+
+    lines.push(['Mise au point', caps.focusMode ? caps.focusMode.join(', ') : 'non réglable']);
+    lines.push(['Lampe', yes(!!caps.torch)]);
+    lines.push(['Zoom optique', caps.zoom ? `${caps.zoom.min}–${caps.zoom.max}` : 'non']);
+
+    let barcode = 'zxing-wasm (téléchargé à la demande)';
+    if ('BarcodeDetector' in window) {
+      const f = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
+      barcode = f.length ? `BarcodeDetector : ${f.filter((x) => /ean|upc/.test(x)).join(', ') || 'aucun format livre'}`
+                         : 'BarcodeDetector présent mais sans format';
+    }
+    lines.push(['Code-barres', barcode]);
+    lines.push(['Dernier scan', lastDecoder]);
+    lines.push(['OCR', window.Tesseract ? 'moteur chargé' : 'pas encore téléchargé']);
+    if (lastOcrText) lines.push(['Dernier texte lu', lastOcrText.slice(0, 120)]);
+    lines.push(['Historique', window.LibrisHistory?.isSynced() ? 'synchronisé' : 'local seulement']);
+    lines.push(['Installée', window.matchMedia('(display-mode: standalone)').matches ? 'oui' : 'non (onglet)']);
+
+    const ul = $('diag-list');
+    ul.textContent = '';
+    for (const [k, v] of lines) {
+      const li = document.createElement('li');
+      const dt = document.createElement('span'); dt.className = 'k'; dt.textContent = k;
+      const dd = document.createElement('span'); dd.className = 'v'; dd.textContent = v;
+      li.append(dt, dd); ul.append(li);
+    }
+    const preview = $('diag-shot');
+    if (lastShot) {
+      preview.hidden = false;
+      $('diag-shot-img').src = lastShot.toDataURL('image/jpeg', 0.7);
+      $('diag-shot-size').textContent = `${lastShot.width}×${lastShot.height}`;
+    } else {
+      preview.hidden = true;
+    }
+
+    const sheet = $('diag-sheet');
+    sheet.classList.add('open', 'full');
+    sheet.setAttribute('aria-hidden', 'false');
+  }
+  function closeDiag() {
+    const sheet = $('diag-sheet');
+    sheet.classList.remove('open', 'full');
+    sheet.setAttribute('aria-hidden', 'true');
+  }
+  function copyDiag() {
+    const txt = [...$('diag-list').children]
+      .map((li) => `${li.querySelector('.k').textContent} : ${li.querySelector('.v').textContent}`)
+      .join('\n');
+    navigator.clipboard?.writeText(txt).then(
+      () => { $('diag-copy').textContent = 'Copié ✓'; },
+      () => { $('diag-copy').textContent = 'Copie refusée'; }
+    );
+  }
+
   // ---------- Dialogue infos ----------
   function openDialog() { $('info-dialog').showModal(); }
   function closeDialog() { const d = $('info-dialog'); if (d.open) d.close('cancel'); }
@@ -822,6 +917,9 @@ const LibrisRecto = (() => {
     $('btn-scan-isbn').addEventListener('click', scanBarcode);
     $('btn-read-title').addEventListener('click', readTitle);
     $('btn-scan-cancel').addEventListener('click', () => cancelScan?.());
+    $('btn-diag').addEventListener('click', openDiag);
+    $('diag-close').addEventListener('click', closeDiag);
+    $('diag-copy').addEventListener('click', copyDiag);
     // La soumission implicite (Entrée) déclenche le PREMIER bouton du formulaire,
     // donc « Fermer » : on intercepte pour lancer la recherche.
     $('manual-input').addEventListener('keydown', (e) => {
@@ -853,5 +951,5 @@ const LibrisRecto = (() => {
   }
   document.addEventListener('DOMContentLoaded', init);
 
-  return { dismissSheet, lookup, scanBarcode, readTitle, openHistory, _orientationOf: orientationOf };
+  return { dismissSheet, lookup, scanBarcode, readTitle, openHistory, openDiag };
 })();

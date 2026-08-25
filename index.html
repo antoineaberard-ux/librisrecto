@@ -174,12 +174,31 @@
     </div>
   </section>
 
+  <!-- Diagnostic : ce que l'appareil sait réellement faire -->
+  <section id="diag-sheet" class="sheet" aria-hidden="true">
+    <div class="sheet-handle"><span></span></div>
+    <div class="sheet-body">
+      <h2 class="diag-title">Diagnostic</h2>
+      <p class="diag-sub">Ce que ce téléphone et ce navigateur savent faire. Utile pour comprendre pourquoi une fonction ne répond pas.</p>
+      <ul id="diag-list" class="diag-list"></ul>
+      <figure id="diag-shot" class="diag-shot" hidden>
+        <figcaption>Dernière image lue par l'OCR — <span id="diag-shot-size"></span></figcaption>
+        <img id="diag-shot-img" alt="" />
+      </figure>
+      <div class="diag-actions">
+        <button id="diag-copy" class="pill ghost">Copier</button>
+        <button id="diag-close" class="pill solid">Fermer</button>
+      </div>
+    </div>
+  </section>
+
   <dialog id="info-dialog" class="manual-dialog">
     <form method="dialog" id="info-form">
       <h2>Infos du livre</h2>
       <p class="dim">Lecture du titre, scan du code-barres ISBN, ou saisie manuelle.</p>
       <button id="btn-read-title" type="button" class="pill solid block">🔤 Lire le titre (OCR)</button>
       <button id="btn-scan-isbn" type="button" class="pill block">📷 Scanner l'ISBN (dos)</button>
+      <button id="btn-diag" type="button" class="link-btn">Diagnostic de l'appareil</button>
       <div class="or">ou</div>
       <input id="manual-input" type="text" inputmode="search" placeholder="ISBN ou titre / auteur" autocomplete="off" />
       <div class="manual-actions">

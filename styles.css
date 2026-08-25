@@ -123,7 +123,7 @@ a.pill { text-decoration: none; text-align: center; display: inline-block; }
 .no-cam:not([hidden]) { display: flex; }
 .no-cam h2 { margin: 0; } .no-cam p { color: var(--muted); margin: 0 0 8px; }
 
-.cv-status { position: absolute; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 150px); z-index: 15;
+.cv-status { position: absolute; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 260px); z-index: 15;
   text-align: center; font-size: 12.5px; color: var(--muted); pointer-events: none; transition: opacity .5s; }
 .cv-status.hide { opacity: 0; }
 .hint.hide { opacity: 0; }
@@ -182,6 +182,24 @@ body.scanning .install-banner { opacity: 0; pointer-events: none; }
   background: var(--card); border-radius: 12px; padding: 12px 14px; margin: 0 0 20px; }
 .ios-actions { display: flex; gap: 10px; }
 .ios-actions .pill { flex: 1; }
+
+/* Diagnostic */
+.diag-title { margin: 4px 0 6px; font-size: 21px; }
+.diag-sub { color: var(--muted); font-size: 13.5px; line-height: 1.5; margin: 0 0 20px; }
+.diag-list { list-style: none; margin: 0 0 22px; padding: 0; }
+.diag-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.diag-list .k { color: var(--muted); font-size: 13.5px; flex-shrink: 0; }
+.diag-list .v { font-size: 14px; text-align: right;
+  font-variant-numeric: tabular-nums; word-break: break-word; }
+.diag-actions { display: flex; gap: 10px; }
+.diag-actions .pill { flex: 1; }
+.link-btn { display: block; width: 100%; border: none; background: none; color: var(--muted);
+  font-size: 13px; text-decoration: underline; padding: 6px 0 0; cursor: pointer; }
+
+.diag-shot { margin: 0 0 22px; }
+.diag-shot figcaption { color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
+.diag-shot img { width: 100%; border-radius: 12px; background: var(--card); display: block; }
 
 /* Historique */
 .history-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 6px; }

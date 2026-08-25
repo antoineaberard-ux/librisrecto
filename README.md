@@ -25,10 +25,15 @@ auteur, note et **synopsis** (Open Library / Google Books).
 | Étape | Détail |
 |-------|--------|
 | 1. Cadre de visée | seule la zone du rectangle est analysée — le reste de la pièce ne vote pas |
-| 2. Sobel | gradient sur une vignette de 224 px, seuil adaptatif à la lumière ambiante |
+| 2. Sobel | dans un Worker, sur une vignette de 224 px, seuil adaptatif à la lumière ambiante |
 | 3. Histogramme circulaire | orientation des contours repliée **modulo 90°**, 1 bin par degré, lissé |
 | 4. Pic + parabole | interpolation parabolique → précision sous le degré |
 | 5. Rotation | `transform: rotate()` sur le GPU, lissée image par image |
+
+Le calcul tourne dans **angle-worker.js**. Sur le thread principal, le
+`getImageData` à 9 Hz force une lecture GPU vers CPU qui bloque le compositeur :
+c'était la cause des à-coups. Les tableaux y sont réutilisés d'une image à
+l'autre, au lieu de 350 Ko réalloués neuf fois par seconde.
 
 Le redressement est **modulo 90°** : il applique toujours la rotation minimale
 (< 45°). Décider lequel des deux axes porte le titre n'est pas fiable sur une
@@ -62,6 +67,27 @@ floues, bruitées et peu contrastées comme en vrai :
 | 0,8 px | 190 px | 5/5 | 0/5 |
 | 1,4 px | 247 px | 5/5 | 0/5 |
 | 2,0 px | 323 px | 5/5 | 0/5 |
+
+## Lecture du titre
+
+Tesseract est lourd : une capture de 3,5 Mpx prend plusieurs secondes sur un
+ordinateur et bien davantage sur un téléphone. La capture est donc plafonnée en
+**largeur** — c'est elle qui porte la lisibilité du texte, plafonner le côté
+long écrasait la largeur à 555 px sur une image portrait — et la progression est
+affichée, sans quoi l'attente passe pour un plantage.
+
+Le titre retenu est la ligne au plus grand corps. Quand rien ne passe le seuil
+de confiance, l'app affiche **ce qu'elle a lu** plutôt qu'un « illisible »
+opaque, et le diagnostic garde l'image envoyée à l'OCR.
+
+## Diagnostic
+
+Le bouton **Diagnostic de l'appareil**, dans « Infos livre », affiche ce que le
+téléphone sait réellement faire : résolution, images par seconde, réglages
+caméra disponibles, moteur de code-barres, dernier texte lu et dernière image
+envoyée à l'OCR. Les capacités varient énormément d'un appareil et d'un
+navigateur à l'autre : sans cet écran, un « ça ne marche pas » n'est pas
+vérifiable à distance.
 
 ## Historique
 
@@ -107,10 +133,10 @@ git push origin main                    # miroir GitHub Pages
 
 | Fonction | Techno |
 |----------|--------|
-| Redressement temps réel | Sobel + histogramme d'orientation, JS pur (aucune dépendance) |
+| Redressement temps réel | Sobel + histogramme d'orientation, JS pur, dans un **Web Worker** |
 | Caméra (iOS + Android) | getUserMedia + rotation CSS (GPU) |
 | Lecture du titre | [Tesseract.js](https://tesseract.projectnaptha.com/) `fra+eng`, chargé à la demande |
-| Scan ISBN | `BarcodeDetector` natif, repli [ZXing](https://github.com/zxing-js/library) |
+| Scan ISBN | `BarcodeDetector` natif, repli [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) |
 | Métadonnées / synopsis | Open Library API · Google Books API |
 | Hors-ligne / installable | Service Worker (réseau d'abord) + Web App Manifest |
 | Hébergement | Firebase Hosting |

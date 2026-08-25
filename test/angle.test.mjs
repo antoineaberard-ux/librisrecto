@@ -4,19 +4,13 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const src = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+// Le détecteur vit dans le Worker : c'est lui la source unique de l'algorithme.
+const src = fs.readFileSync(new URL('../angle-worker.js', import.meta.url), 'utf8');
 
-// app.js ne touche au DOM qu'au moment de init(), un stub suffit.
-const stub = { style: {}, classList: { add(){}, remove(){}, toggle(){} }, addEventListener(){}, getContext: () => null };
-const sandbox = {
-  document: { getElementById: () => stub, addEventListener(){}, createElement: () => stub, head: { appendChild(){} } },
-  window: { innerWidth: 390, innerHeight: 844, devicePixelRatio: 2, addEventListener(){} },
-  navigator: {}, requestAnimationFrame: () => 0, performance: { now: () => 0 }, setTimeout: () => 0, console
-};
-sandbox.window.document = sandbox.document;
+const sandbox = { console };   // pas de `self` : le bloc Worker ne s'exécute pas
 vm.createContext(sandbox);
-vm.runInContext(src + '\n;globalThis.__api = LibrisRecto;', sandbox);
-const { _orientationOf } = sandbox.__api;
+vm.runInContext(src + '\n;globalThis.__orientationOf = orientationOf;', sandbox);
+const _orientationOf = sandbox.__orientationOf;
 
 // l'app redresse modulo 90° : la vérité attendue est l'inclinaison repliée dans (-45, 45]
 const wrap = (a) => ((a + 45) % 90 + 90) % 90 - 45;
