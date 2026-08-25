@@ -56,6 +56,7 @@
           <button id="btn-freeze" class="pill solid">⏸ Figer</button>
           <button id="btn-info" class="pill">ℹ️ Infos livre</button>
         </div>
+        <p class="credit">Idée de Patrick&nbsp;PERRUQUAUD — réalisé par ABÉRARD&nbsp;GROUP</p>
       </footer>
     </div>
 
@@ -74,6 +75,7 @@
         <p>Redressez un livre incliné pour lire le titre sans pencher la tête.</p>
         <button id="btn-start" class="pill solid big">Activer la caméra</button>
         <a id="btn-dl-icon" class="pill ghost" href="icons/logo.svg" download="librisrecto-icon.svg">⬇︎ Télécharger l'icône</a>
+        <p class="credit gate-credit">Idée de Patrick&nbsp;PERRUQUAUD — réalisé par ABÉRARD&nbsp;GROUP</p>
       </div>
     </div>
 
@@ -189,24 +191,31 @@
         <button id="diag-copy" class="pill ghost">Copier</button>
         <button id="diag-close" class="pill solid">Fermer</button>
       </div>
+      <button id="diag-refresh" class="link-btn">Forcer la mise à jour de l'application</button>
     </div>
   </section>
 
-  <dialog id="info-dialog" class="manual-dialog">
-    <form method="dialog" id="info-form">
-      <h2>Infos du livre</h2>
-      <p class="dim">Lecture du titre, scan du code-barres ISBN, ou saisie manuelle.</p>
+  <!-- Panneau « Infos livre ». Ancien <dialog> + showModal() : absent d'iOS
+       Safari avant 15.4 et des WebView Android anciennes, où l'appel levait une
+       erreur et rendait le scan ISBN et l'OCR totalement inatteignables. On
+       reprend la feuille glissante utilisée partout ailleurs, qui ne dépend
+       d'aucune API récente. -->
+  <section id="info-sheet" class="sheet" aria-hidden="true">
+    <div class="sheet-handle" id="info-handle"><span></span></div>
+    <div class="sheet-body">
+      <h2 class="info-title">Infos du livre</h2>
+      <p class="info-sub">Lecture du titre, scan du code-barres ISBN, ou saisie manuelle.</p>
       <button id="btn-read-title" type="button" class="pill solid block">🔤 Lire le titre (OCR)</button>
       <button id="btn-scan-isbn" type="button" class="pill block">📷 Scanner l'ISBN (dos)</button>
-      <button id="btn-diag" type="button" class="link-btn">Diagnostic de l'appareil</button>
       <div class="or">ou</div>
       <input id="manual-input" type="text" inputmode="search" placeholder="ISBN ou titre / auteur" autocomplete="off" />
       <div class="manual-actions">
-        <button value="cancel" class="pill ghost">Fermer</button>
-        <button value="ok" class="pill solid">Rechercher</button>
+        <button id="btn-info-close" type="button" class="pill ghost">Fermer</button>
+        <button id="btn-manual-search" type="button" class="pill solid">Rechercher</button>
       </div>
-    </form>
-  </dialog>
+      <button id="btn-diag" type="button" class="link-btn">Diagnostic de l'appareil</button>
+    </div>
+  </section>
 
   <script src="install.js"></script>
   <script type="module" src="history.js"></script>

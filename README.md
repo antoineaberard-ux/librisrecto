@@ -80,14 +80,30 @@ Le titre retenu est la ligne au plus grand corps. Quand rien ne passe le seuil
 de confiance, l'app affiche **ce qu'elle a lu** plutôt qu'un « illisible »
 opaque, et le diagnostic garde l'image envoyée à l'OCR.
 
+## Compatibilité
+
+Le panneau « Infos livre » n'utilise **pas** `<dialog>` / `showModal()`, absent
+d'iOS Safari avant 15.4 et des WebView Android anciennes : l'appel y levait une
+erreur et rendait le scan ISBN comme la lecture du titre totalement
+inatteignables, pendant que le redressement continuait de fonctionner. Tous les
+panneaux sont des feuilles glissantes, sans API récente.
+
+`npm run deploy` grave la date de compilation dans l'app et dans le nom du cache
+du service worker. Le diagnostic l'affiche : c'est la première chose à vérifier
+devant un « ça ne marche toujours pas », un téléphone pouvant tourner sur une
+version en cache.
+
 ## Diagnostic
 
 Le bouton **Diagnostic de l'appareil**, dans « Infos livre », affiche ce que le
 téléphone sait réellement faire : résolution, images par seconde, réglages
-caméra disponibles, moteur de code-barres, dernier texte lu et dernière image
-envoyée à l'OCR. Les capacités varient énormément d'un appareil et d'un
-navigateur à l'autre : sans cet écran, un « ça ne marche pas » n'est pas
-vérifiable à distance.
+caméra disponibles, moteur de code-barres, dernier texte lu, dernière image
+envoyée à l'OCR, **version chargée** et **dernière erreur JavaScript**. Les
+capacités varient énormément d'un appareil et d'un navigateur à l'autre : sans
+cet écran, un « ça ne marche pas » n'est pas vérifiable à distance.
+
+Le bouton **Forcer la mise à jour** désinscrit le service worker, vide les
+caches et recharge, pour le cas où une version périmée survivrait.
 
 ## Historique
 

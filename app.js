@@ -10,6 +10,20 @@
    Secondaire : lecture du titre (OCR Tesseract) et scan ISBN
    (BarcodeDetector natif, repli ZXing) -> synopsis Open Library / Google Books. */
 
+// Version affichée dans le diagnostic : sans elle, impossible de savoir si un
+// téléphone tourne encore sur une version en cache.
+const LIBRIS_VERSION = '2026-08-25 10:58';
+
+// Une erreur avalée est une panne muette : on garde la dernière pour le
+// diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
+window.__librisLastError = null;
+window.addEventListener('error', (e) => {
+  window.__librisLastError = `${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`;
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.__librisLastError = 'promesse rejetée : ' + (e.reason?.message || e.reason);
+});
+
 const LibrisRecto = (() => {
   'use strict';
 
@@ -815,6 +829,7 @@ const LibrisRecto = (() => {
     const lines = [];
     const yes = (v) => (v ? 'oui' : 'non');
 
+    lines.push(['Version', LIBRIS_VERSION]);
     lines.push(['Écran', `${window.innerWidth}×${window.innerHeight} @${DPR}x`]);
     lines.push(['Caméra', video.videoWidth ? `${video.videoWidth}×${video.videoHeight}` : 'non démarrée']);
     lines.push(['Affichage', `${fps.value} img/s`]);
@@ -837,6 +852,7 @@ const LibrisRecto = (() => {
     if (lastOcrText) lines.push(['Dernier texte lu', lastOcrText.slice(0, 120)]);
     lines.push(['Historique', window.LibrisHistory?.isSynced() ? 'synchronisé' : 'local seulement']);
     lines.push(['Installée', window.matchMedia('(display-mode: standalone)').matches ? 'oui' : 'non (onglet)']);
+    lines.push(['Dernière erreur', window.__librisLastError || 'aucune']);
 
     const ul = $('diag-list');
     ul.textContent = '';
@@ -864,6 +880,22 @@ const LibrisRecto = (() => {
     sheet.classList.remove('open', 'full');
     sheet.setAttribute('aria-hidden', 'true');
   }
+  // Un service worker peut servir une version périmée : ce bouton coupe court.
+  async function forceUpdate() {
+    $('diag-refresh').textContent = 'Nettoyage…';
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch { /* on recharge quand même */ }
+    location.reload();
+  }
+
   function copyDiag() {
     const txt = [...$('diag-list').children]
       .map((li) => `${li.querySelector('.k').textContent} : ${li.querySelector('.v').textContent}`)
@@ -875,8 +907,20 @@ const LibrisRecto = (() => {
   }
 
   // ---------- Dialogue infos ----------
-  function openDialog() { $('info-dialog').showModal(); }
-  function closeDialog() { const d = $('info-dialog'); if (d.open) d.close('cancel'); }
+  // Plus de <dialog>.showModal() : absent d'iOS Safari avant 15.4 et des
+  // WebView Android anciennes, où l'appel levait une erreur et rendait le scan
+  // ISBN comme l'OCR totalement inatteignables.
+  function openDialog() {
+    dismissSheet();
+    const p = $('info-sheet');
+    p.classList.add('open');
+    p.setAttribute('aria-hidden', 'false');
+  }
+  function closeDialog() {
+    const p = $('info-sheet');
+    p.classList.remove('open', 'full');
+    p.setAttribute('aria-hidden', 'true');
+  }
 
   // Dans l'app native les fichiers sont déjà locaux : un service worker
   // n'apporterait rien et son cache ferait écran aux mises à jour de l'APK.
@@ -884,6 +928,14 @@ const LibrisRecto = (() => {
   function registerSW() {
     if (isNative() || !('serviceWorker' in navigator)) return;
     navigator.serviceWorker.register('sw.js').catch(() => {});
+    // Sans ceci, la page déjà ouverte continue de tourner sur l'ancienne
+    // version et il faut recharger deux fois pour voir une mise à jour.
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
   }
 
   function init() {
@@ -920,16 +972,14 @@ const LibrisRecto = (() => {
     $('btn-diag').addEventListener('click', openDiag);
     $('diag-close').addEventListener('click', closeDiag);
     $('diag-copy').addEventListener('click', copyDiag);
-    // La soumission implicite (Entrée) déclenche le PREMIER bouton du formulaire,
-    // donc « Fermer » : on intercepte pour lancer la recherche.
+    $('diag-refresh').addEventListener('click', forceUpdate);
     $('manual-input').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault(); closeDialog(); lookupFromInput();
     });
-    $('info-form').addEventListener('submit', () => {
-      const dlg = $('info-dialog');
-      setTimeout(() => { if (dlg.returnValue === 'ok') lookupFromInput(); }, 0);
-    });
+    $('btn-manual-search').addEventListener('click', () => { closeDialog(); lookupFromInput(); });
+    $('btn-info-close').addEventListener('click', closeDialog);
+    $('info-handle').addEventListener('click', closeDialog);
     $('btn-history').addEventListener('click', openHistory);
     $('history-handle').addEventListener('click', closeHistory);
     $('btn-history-clear').addEventListener('click', () => {

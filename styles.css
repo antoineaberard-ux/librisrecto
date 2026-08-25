@@ -219,14 +219,18 @@ body.scanning .install-banner { opacity: 0; pointer-events: none; }
   padding: 6px 4px; cursor: pointer; }
 .history-empty { color: var(--muted); text-align: center; padding: 30px 10px; margin: 0; }
 
-/* Dialog */
-.manual-dialog { border: none; border-radius: 20px; background: var(--sheet-bg); color: var(--ink);
-  padding: 22px; width: min(90vw, 380px); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
-.manual-dialog::backdrop { background: rgba(0,0,0,.6); }
-.manual-dialog h2 { margin: 0 0 6px; font-size: 19px; }
-.manual-dialog .dim { color: var(--muted); font-size: 13.5px; margin: 0 0 16px; }
-.manual-dialog .or { text-align: center; color: var(--muted); font-size: 13px; margin: 14px 0; }
+/* Panneau « Infos livre » */
+.info-title { margin: 4px 0 6px; font-size: 21px; }
+.info-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 18px; }
+.or { text-align: center; color: var(--muted); font-size: 13px; margin: 14px 0; }
 #manual-input { width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid #34343c;
   background: var(--card); color: var(--ink); font-size: 16px; margin-bottom: 16px; }
 #manual-input:focus { outline: none; border-color: var(--amber); }
-.manual-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.manual-actions { display: flex; gap: 10px; }
+.manual-actions .pill { flex: 1; }
+
+/* Crédit — dans le bloc de commandes, sinon il passe sous les boutons */
+.gate-credit { margin-top: 18px; }
+.credit { margin: 2px 0 0; text-align: center; font-size: 10.5px; letter-spacing: .3px;
+  color: rgba(255,255,255,.45); pointer-events: none;
+  text-shadow: 0 1px 6px rgba(0,0,0,.85); }
