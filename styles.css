@@ -219,6 +219,11 @@ body.scanning .install-banner { opacity: 0; pointer-events: none; }
   padding: 6px 4px; cursor: pointer; }
 .history-empty { color: var(--muted); text-align: center; padding: 30px 10px; margin: 0; }
 
+.diag-selftest { white-space: pre-wrap; font-size: 13px; line-height: 1.55;
+  background: var(--card); border-radius: 12px; padding: 14px;
+  margin: 0 0 20px; color: #e7e3da; font-family: inherit; }
+.diag-selftest[hidden] { display: none; }
+
 /* Liens libraires */
 .shop-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
 .shop-links[hidden] { display: none; }

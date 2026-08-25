@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-08-25 15:40';
+const LIBRIS_VERSION = '2026-08-25 16:02';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -115,6 +115,10 @@ const LibrisRecto = (() => {
     applyFocusMode('continuous');
     $('btn-torch').hidden = !caps.torch;
     setupZoomSlider();
+    // Sans autofocus piloté, l'objectif resterait sur sa distance par défaut.
+    if (!caps.focusMode?.includes('continuous') && autofocusSupporte()) {
+      setTimeout(autofocusSweep, 1200);
+    }
   }
   async function applyFocusMode(mode) {
     if (!track?.applyConstraints) return false;
@@ -122,6 +126,70 @@ const LibrisRecto = (() => {
     try { await track.applyConstraints({ advanced: [{ focusMode: mode }] }); return true; }
     catch { return false; }
   }
+
+  /* Certaines caméras Android n'exposent QUE le mode « manual » : aucun
+     autofocus n'est alors pilotable, l'objectif reste à une distance fixe et
+     l'image est floue de près. Le redressement s'en accommode, il mesure des
+     gradients sur toute une zone ; le code-barres et l'OCR, non.
+
+     On fabrique donc l'autofocus manquant : on balaie les distances de mise au
+     point et on garde la plus nette. Une passe coûte un peu plus d'une seconde,
+     elle n'est lancée qu'au toucher et avant un scan. */
+  const autofocusSupporte = () =>
+    !!(caps.focusDistance && track?.applyConstraints &&
+       (!caps.focusMode || caps.focusMode.includes('manual')));
+
+  let sharpCanvas = null, sharpCtx = null;
+  function sharpness() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return 0;
+    const W = 160, H = 120;
+    if (!sharpCanvas) {
+      sharpCanvas = document.createElement('canvas');
+      sharpCanvas.width = W; sharpCanvas.height = H;
+      sharpCtx = sharpCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    // Centre de l'image : c'est là que l'utilisateur vise.
+    const cw = Math.round(vw * 0.4), ch = Math.round(vh * 0.25);
+    sharpCtx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, W, H);
+    const d = sharpCtx.getImageData(0, 0, W, H).data;
+    let total = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = (y * W + x) * 4;
+        const c = d[i], droite = d[i + 4], bas = d[i + W * 4];
+        total += Math.abs(c - droite) + Math.abs(c - bas);
+      }
+    }
+    return total;
+  }
+
+  let sweepEnCours = false;
+  async function autofocusSweep() {
+    if (sweepEnCours || !autofocusSupporte()) return false;
+    sweepEnCours = true;
+    const { min, max } = caps.focusDistance;
+    const pas = 8;
+    let meilleur = { note: -1, distance: min };
+    try {
+      for (let i = 0; i < pas; i++) {
+        const distance = min + (max - min) * (i / (pas - 1));
+        await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: distance }] });
+        await new Promise((r) => setTimeout(r, 160));   // laisser l'objectif se poser
+        const note = sharpness();
+        if (note > meilleur.note) meilleur = { note, distance };
+      }
+      await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: meilleur.distance }] });
+      derniereMiseAuPoint = meilleur.distance.toFixed(2);
+      return true;
+    } catch (e) {
+      noteIncident('Mise au point', e);
+      return false;
+    } finally {
+      sweepEnCours = false;
+    }
+  }
+  let derniereMiseAuPoint = null;
 
   // Point du repère écran -> coordonnées normalisées du capteur. La scène est
   // pivotée et zoomée, et le <video> est en object-fit:cover : il faut défaire
@@ -145,12 +213,16 @@ const LibrisRecto = (() => {
     const p = screenToSensor(px, py);
     if (!p || !track?.applyConstraints) return;
     showFocusRing(px, py);
+
     const single = caps.focusMode?.includes('single-shot');
+    const continu = caps.focusMode?.includes('continuous');
+    if (!single && !continu) return void autofocusSweep();   // autofocus fabriqué
+
     try {
       await track.applyConstraints({
         advanced: [{ pointsOfInterest: [{ x: p.x, y: p.y }], focusMode: single ? 'single-shot' : 'continuous' }]
       });
-    } catch { /* non supporté : le focus continu reste actif */ }
+    } catch (e) { noteIncident('Mise au point', e); }
     if (single) {
       clearTimeout(focusRingTimer);
       focusRingTimer = setTimeout(() => applyFocusMode('continuous'), 3000);
@@ -442,8 +514,16 @@ const LibrisRecto = (() => {
     if (frozen) unfreeze();
     scanMode = true; applyTransform();
     showScanHud('Visez le code-barres au dos du livre…');
-    // Un code-barres se lit de près : on force la mise au point sur le cadre.
-    focusAt(window.innerWidth / 2, window.innerHeight / 2);
+    // Un code-barres se lit de près : on refait la mise au point sur le cadre.
+    // Sur les appareils sans autofocus, le balayage doit finir avant de décoder,
+    // sinon on analyse des images floues pendant toute sa durée.
+    if (autofocusSupporte() && !caps.focusMode?.includes('continuous')) {
+      $('scan-msg').textContent = 'Mise au point…';
+      await autofocusSweep();
+      $('scan-msg').textContent = 'Visez le code-barres au dos du livre…';
+    } else {
+      focusAt(window.innerWidth / 2, window.innerHeight / 2);
+    }
     let timer = 0;
     try {
       const decode = await pickDecoder();
@@ -588,6 +668,10 @@ const LibrisRecto = (() => {
     openSheet();
     showLoading('Préparation de la lecture…');
     try {
+      if (autofocusSupporte() && !caps.focusMode?.includes('continuous')) {
+        showLoading('Mise au point…');
+        await autofocusSweep();
+      }
       const shot = captureUpright();
       if (!shot) throw new Error('frame');
       lastShot = shot;      // visible dans le diagnostic : « voici ce que l'OCR a vu »
@@ -916,7 +1000,12 @@ const LibrisRecto = (() => {
     lines.push(['Détecteur d\'angle', worker ? 'worker actif' : 'indisponible']);
     lines.push(['Angle détecté', locked ? `${(-dispAngle).toFixed(1)}°` : 'pas de verrou']);
 
-    lines.push(['Mise au point', caps.focusMode ? caps.focusMode.join(', ') : 'non réglable']);
+    const modes = caps.focusMode ? caps.focusMode.join(', ') : 'non réglable';
+    lines.push(['Mise au point', autofocusSupporte() && !caps.focusMode?.includes('continuous')
+      ? `${modes} → balayage auto${derniereMiseAuPoint ? ' (' + derniereMiseAuPoint + ')' : ''}`
+      : modes]);
+    lines.push(['Distance réglable', caps.focusDistance
+      ? `${caps.focusDistance.min} – ${caps.focusDistance.max}` : 'non']);
     lines.push(['Lampe', yes(!!caps.torch)]);
     lines.push(['Zoom optique', caps.zoom ? `${caps.zoom.min}–${caps.zoom.max}` : 'non']);
 
@@ -988,6 +1077,98 @@ const LibrisRecto = (() => {
     );
   }
 
+  /* Autotest des lecteurs, sans caméra.
+
+     Une image de test est fabriquée dans l'app puis passée aux mêmes décodeurs
+     que le scan réel. Cela sépare deux causes que l'utilisateur ne peut pas
+     distinguer : un moteur indisponible sur son appareil, ou une image de
+     caméra trop floue ou mal cadrée. */
+  const EAN_L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const EAN_G = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+  const EAN_R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+  const EAN_PARITY = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+
+  function eanBits(code) {
+    const d = code.split('').map(Number);
+    let bits = '101';
+    const parity = EAN_PARITY[d[0]];
+    for (let i = 1; i <= 6; i++) bits += (parity[i - 1] === 'L' ? EAN_L : EAN_G)[d[i]];
+    bits += '01010';
+    for (let i = 7; i < 13; i++) bits += EAN_R[d[i]];
+    return bits + '101';
+  }
+
+  function testBarcodeImage(code) {
+    const bits = eanBits(code);
+    const module = 3, w = bits.length * module, h = 150;
+    const c = document.createElement('canvas');
+    c.width = w + 80; c.height = h + 80;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#000000';
+    for (let i = 0; i < bits.length; i++) {
+      if (bits[i] === '1') ctx.fillRect(40 + i * module, 40, module, h);
+    }
+    return c;
+  }
+
+  function testTextImage() {
+    const c = document.createElement('canvas');
+    c.width = 900; c.height = 400;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#000000'; ctx.textAlign = 'center';
+    ctx.font = 'bold 90px Georgia, serif';
+    ctx.fillText('LE ROUGE', c.width / 2, 150);
+    ctx.fillText('ET LE NOIR', c.width / 2, 260);
+    ctx.font = '48px Georgia, serif';
+    ctx.fillText('Stendhal', c.width / 2, 340);
+    return c;
+  }
+
+  async function runSelfTest() {
+    const zone = $('diag-selftest');
+    const bouton = $('diag-selftest-run');
+    bouton.disabled = true;
+    zone.hidden = false;
+
+    const dire = (txt) => { zone.textContent = txt; };
+    const CODE = '9782070368228';
+
+    dire('Lecteur de code-barres…');
+    let ligneCode;
+    try {
+      const t0 = performance.now();
+      const decodeur = await pickDecoder();
+      const lu = await decodeur.decode(testBarcodeImage(CODE));
+      const ms = Math.round(performance.now() - t0);
+      ligneCode = lu === CODE
+        ? `Code-barres : OK (${decodeur.moteur}, ${ms} ms)`
+        : `Code-barres : ÉCHEC — ${decodeur.moteur} a lu « ${lu || 'rien' } »`;
+    } catch (e) {
+      ligneCode = `Code-barres : ÉCHEC — ${e.message}`;
+    }
+
+    dire(ligneCode + '\nLecteur de titre… (téléchargement possible)');
+    let ligneOcr;
+    try {
+      const t0 = performance.now();
+      if (!window.Tesseract) await loadScript(CDN_TESSERACT);
+      if (!ocrWorker) ocrWorker = await window.Tesseract.createWorker('fra+eng');
+      const { data } = await ocrWorker.recognize(testTextImage());
+      const lu = (data.text || '').replace(/\s+/g, ' ').trim();
+      const ms = Math.round(performance.now() - t0);
+      ligneOcr = /ROUGE/i.test(lu)
+        ? `Titre : OK (${ms} ms) — « ${lu.slice(0, 40)} »`
+        : `Titre : ÉCHEC — lu « ${lu.slice(0, 60) || 'rien'} »`;
+    } catch (e) {
+      ligneOcr = `Titre : ÉCHEC — ${e.message}`;
+    }
+
+    dire(`${ligneCode}\n${ligneOcr}\n\nSi ces deux lignes indiquent OK, les lecteurs fonctionnent sur cet appareil et c'est l'image de la caméra qu'il faut améliorer : rapprochez-vous, touchez l'écran pour faire le point, allumez la lampe.`);
+    bouton.disabled = false;
+  }
+
   // ---------- Dialogue infos ----------
   // Plus de <dialog>.showModal() : absent d'iOS Safari avant 15.4 et des
   // WebView Android anciennes, où l'appel levait une erreur et rendait le scan
@@ -1055,6 +1236,7 @@ const LibrisRecto = (() => {
     $('diag-close').addEventListener('click', closeDiag);
     $('diag-copy').addEventListener('click', copyDiag);
     $('diag-refresh').addEventListener('click', forceUpdate);
+    $('diag-selftest-run').addEventListener('click', runSelfTest);
     $('manual-input').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault(); closeDialog(); lookupFromInput();

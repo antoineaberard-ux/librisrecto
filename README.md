@@ -47,6 +47,7 @@ livres suivants.
 | Réglage | Détail |
 |---------|--------|
 | Mise au point | `focusMode: continuous` à l'ouverture ; **toucher l'image** pose un `pointsOfInterest` et déclenche un `single-shot` |
+| Sans autofocus | balayage des distances, la plus nette est retenue — voir ci-dessous |
 | Lampe | bouton 💡 en haut, affiché seulement si la piste vidéo annonce `torch` |
 | Zoom | zoom **optique** du capteur quand il existe, sinon agrandissement CSS |
 | Résolution | 2560×1440 demandé ; les frames envoyées au décodeur ne sont **pas** réduites |
@@ -54,6 +55,23 @@ livres suivants.
 Ces trois réglages passent par `applyConstraints`. **Android Chrome** les
 supporte ; **iOS Safari** n'en expose aucun, donc le bouton lampe reste masqué
 et la mise au point reste celle du système.
+
+### Quand la caméra n'a pas d'autofocus
+
+Certaines caméras Android n'exposent que `focusMode: ['manual']` : aucun
+autofocus n'est pilotable et l'objectif reste à sa distance par défaut, donc
+flou de près. Le redressement s'en accommode — il mesure des gradients sur
+toute une zone — mais **le code-barres et l'OCR, non** : c'est la panne qui a
+résisté à trois correctifs.
+
+L'app fabrique alors l'autofocus manquant : elle balaie `focusDistance` en huit
+pas, mesure la netteté d'un carré central à chaque pas, et retient la meilleure
+distance. Une passe dure un peu plus d'une seconde ; elle est lancée au
+démarrage, au toucher, et avant chaque scan ou lecture de titre.
+
+Mesuré sur une caméra simulée n'exposant que `manual`, objectif volontairement
+déréglé : le balayage retrouve la bonne distance et l'OCR lit le titre, là où il
+rendait « illisible » auparavant.
 
 ## Scan ISBN
 
@@ -104,6 +122,11 @@ cet écran, un « ça ne marche pas » n'est pas vérifiable à distance.
 
 Le bouton **Forcer la mise à jour** désinscrit le service worker, vide les
 caches et recharge, pour le cas où une version périmée survivrait.
+
+Le bouton **Tester les lecteurs** décode un code-barres et lit un texte
+fabriqués par l'app elle-même, sans caméra. Il sépare deux causes que
+l'utilisateur ne peut pas distinguer seul : un moteur indisponible sur son
+appareil, ou une image de caméra trop floue.
 
 ## Historique
 
