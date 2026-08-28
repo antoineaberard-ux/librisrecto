@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-08-28 20:09';
+const LIBRIS_VERSION = '2026-08-28 20:21';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -140,6 +140,14 @@ const LibrisRecto = (() => {
        (!caps.focusMode || caps.focusMode.includes('manual')));
 
   let sharpCanvas = null, sharpCtx = null;
+
+  /* Mesure de netteté normalisée par le contraste.
+
+     Une simple somme de gradients dépend surtout de la scène : un motif très
+     contrasté mais flou peut la faire monter plus haut qu'un texte net et pâle.
+     En divisant l'énergie des gradients par l'écart-type des luminances, on
+     obtient une mesure qui ne juge plus « combien il y a de contraste » mais
+     « à quel point ce contraste est franc » — c'est-à-dire la mise au point. */
   function sharpness() {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw) return 0;
@@ -153,37 +161,92 @@ const LibrisRecto = (() => {
     const cw = Math.round(vw * 0.4), ch = Math.round(vh * 0.25);
     sharpCtx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, W, H);
     const d = sharpCtx.getImageData(0, 0, W, H).data;
-    let total = 0;
+
+    let somme = 0, sommeCarres = 0, gradients = 0, n = 0;
     for (let y = 1; y < H - 1; y++) {
       for (let x = 1; x < W - 1; x++) {
         const i = (y * W + x) * 4;
-        const c = d[i], droite = d[i + 4], bas = d[i + W * 4];
-        total += Math.abs(c - droite) + Math.abs(c - bas);
+        const v = d[i];
+        somme += v; sommeCarres += v * v; n++;
+        gradients += Math.abs(v - d[i + 4]) + Math.abs(v - d[i + W * 4]);
       }
     }
-    return total;
+    if (!n) return 0;
+    const moyenne = somme / n;
+    const ecartType = Math.sqrt(Math.max(0, sommeCarres / n - moyenne * moyenne));
+    if (ecartType < 4) return 0;          // surface unie : rien à mettre au point
+    return (gradients / n) / ecartType;
   }
 
-  let sweepEnCours = false;
+  let netteteTimer = 0, netteteMin = Infinity, netteteMax = 0, netteteEchantillons = 0;
+  function demarrerNettete() {
+    arreterNettete();
+    netteteMin = Infinity; netteteMax = 0; netteteEchantillons = 0;
+    $('sharp-meter').hidden = false;
+    $('sharp-fill').style.width = '0%';
+    netteteTimer = setInterval(() => {
+      const note = sharpness();
+      netteteEchantillons++;
+      if (note > netteteMax) netteteMax = note;
+      if (note < netteteMin) netteteMin = note;
+
+      const etendue = netteteMin > 0 ? netteteMax / netteteMin : 1;
+      const part = netteteMax > 0 ? Math.max(0, Math.min(1, note / netteteMax)) : 0;
+      $('sharp-fill').style.width = `${Math.round(part * 100)}%`;
+
+      // On ne peut affirmer « net » qu'après avoir VU du flou : tant que toutes
+      // les mesures se ressemblent, le maximum n'est qu'un maximum local et
+      // annoncer la netteté serait une pure invention.
+      const aCompare = netteteEchantillons >= 10 && etendue > 1.25;
+      const net = aCompare && part > 0.9;
+      $('sharp-fill').classList.toggle('bon', net);
+      $('sharp-hint').textContent = net
+        ? 'Net — gardez cette distance'
+        : (aCompare ? 'Éloignez ou rapprochez lentement le téléphone'
+                    : 'Bougez lentement pour comparer les distances…');
+    }, 200);
+  }
+  function arreterNettete() {
+    clearInterval(netteteTimer);
+    netteteTimer = 0;
+    const m = $('sharp-meter');
+    if (m) m.hidden = true;
+  }
+
   async function autofocusSweep() {
     if (sweepEnCours || !autofocusSupporte()) return false;
     sweepEnCours = true;
     const { min, max } = caps.focusDistance;
     const pas = 8;
+    const mesures = [];
     let meilleur = { note: -1, distance: min };
     try {
       for (let i = 0; i < pas; i++) {
         const distance = min + (max - min) * (i / (pas - 1));
-        await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: distance }] });
-        await new Promise((r) => setTimeout(r, 160));   // laisser l'objectif se poser
+        const etat = await appliquerDistance(distance);
+        await attendreImage(320);        // une vraie optique met ~300 ms à se poser
         const note = sharpness();
+        mesures.push({ d: distance, a: etat.applique, n: note });
         if (note > meilleur.note) meilleur = { note, distance };
       }
-      await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: meilleur.distance }] });
+      await appliquerDistance(meilleur.distance);
+
+      // L'appareil a-t-il vraiment suivi ? Deux signes : la distance appliquée
+      // change d'un pas à l'autre, et la netteté varie. Si les deux sont plats,
+      // le réglage est ignoré et il faut le dire plutôt que prétendre l'inverse.
+      const distancesAppliquees = new Set(mesures.map((m) => (m.a == null ? 'n/d' : m.a.toFixed(3))));
+      const notes = mesures.map((m) => m.n);
+      const ecart = Math.max(...notes) / Math.max(1, Math.min(...notes));
+      const suivi = distancesAppliquees.size > 1 || ecart > 1.15;
+
       derniereMiseAuPoint = meilleur.distance.toFixed(2);
-      return true;
+      rapportMiseAuPoint = suivi
+        ? `${derniereMiseAuPoint} (netteté ×${ecart.toFixed(2)})`
+        : `IGNORÉ par l'appareil (netteté plate ×${ecart.toFixed(2)})`;
+      return suivi;
     } catch (e) {
       noteIncident('Mise au point', e);
+      rapportMiseAuPoint = 'erreur : ' + e.message;
       return false;
     } finally {
       sweepEnCours = false;
@@ -519,8 +582,14 @@ const LibrisRecto = (() => {
     // sinon on analyse des images floues pendant toute sa durée.
     if (autofocusSupporte() && !caps.focusMode?.includes('continuous')) {
       $('scan-msg').textContent = 'Mise au point…';
-      await autofocusSweep();
-      $('scan-msg').textContent = 'Visez le code-barres au dos du livre…';
+      const pilote = await autofocusSweep();
+      $('scan-msg').textContent = pilote
+        ? 'Visez le code-barres au dos du livre…'
+        : 'Cet appareil ne règle pas la mise au point : ajustez la distance';
+      if (!pilote) demarrerNettete();
+    } else if (!caps.focusMode?.includes('continuous')) {
+      // Ni autofocus, ni distance réglable : la distance est le seul recours.
+      demarrerNettete();
     } else {
       focusAt(window.innerWidth / 2, window.innerHeight / 2);
     }
@@ -547,6 +616,7 @@ const LibrisRecto = (() => {
     }
   }
   function endScan() {
+    arreterNettete();
     cancelScan = null; scanMode = false;
     hideScanHud(); restoreStream(); applyTransform();
     setTorch(false);
@@ -1006,6 +1076,7 @@ const LibrisRecto = (() => {
       : modes]);
     lines.push(['Distance réglable', caps.focusDistance
       ? `${caps.focusDistance.min} – ${caps.focusDistance.max}` : 'non']);
+    if (rapportMiseAuPoint) lines.push(['Dernier balayage', rapportMiseAuPoint]);
     lines.push(['Lampe', yes(!!caps.torch)]);
     lines.push(['Zoom optique', caps.zoom ? `${caps.zoom.min}–${caps.zoom.max}` : 'non']);
 
