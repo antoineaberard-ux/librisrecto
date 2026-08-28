@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-08-25 16:02';
+const LIBRIS_VERSION = '2026-08-28 20:09';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -1249,11 +1249,11 @@ const LibrisRecto = (() => {
     $('btn-history-clear').addEventListener('click', () => {
       if (confirm('Effacer tout l\'historique des livres scannés ?')) window.LibrisHistory?.clear();
     });
-    // history.js est un module : il peut arriver après ce script.
-    const bindHistory = () => window.LibrisHistory
-      ? window.LibrisHistory.onChange(renderHistory)
-      : setTimeout(bindHistory, 200);
-    bindHistory();
+    // history.js est un module : il s'exécute après ce script classique. Le
+    // sondage précédent tournait indéfiniment si le module ne chargeait jamais.
+    const bindHistory = () => window.LibrisHistory?.onChange(renderHistory);
+    if (window.LibrisHistory) bindHistory();
+    else window.addEventListener('librishistory:ready', bindHistory, { once: true });
 
     $('btn-start').addEventListener('click', startCamera);
     $('btn-retry').addEventListener('click', startCamera);

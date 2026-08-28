@@ -162,3 +162,8 @@ window.LibrisHistory = {
   isSynced: () => !!cloud,
   onChange: (fn) => { onChange = fn; fn(list()); }
 };
+
+// app.js est un script classique, ce fichier un module : il s'exécute donc
+// après. On signale plutôt que de se faire sonder en boucle.
+window.dispatchEvent(new Event('librishistory:ready'));
+
