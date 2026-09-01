@@ -45,12 +45,15 @@
         <div class="row fine">
           <span class="ico">↻</span>
           <input id="rotate-fine" class="slider" type="range" min="-90" max="90" step="1" value="0" aria-label="Rotation manuelle" />
-          <button id="btn-quarter" class="mini" title="Quart de tour (dos de livre vertical)">↻ 90°</button>
+          <button id="btn-quarter-left" class="mini" title="Quart de tour vers la gauche">↺</button>
+          <button id="btn-quarter-right" class="mini" title="Quart de tour vers la droite">↻</button>
           <button id="btn-reset" class="mini on" title="Redressement automatique">Auto</button>
         </div>
         <div id="zoom-row" class="row zoom">
-          <span class="ico">🔍</span>
-          <input id="zoom" class="slider" type="range" min="1" max="4" step="0.1" value="1" aria-label="Zoom" />
+          <button id="btn-zoom-out" class="mini" title="Voir plus large" aria-label="Dézoomer">−</button>
+          <input id="zoom" class="slider" type="range" min="0.4" max="4" step="0.05" value="1" aria-label="Zoom" />
+          <button id="btn-zoom-in" class="mini" title="Agrandir" aria-label="Zoomer">+</button>
+          <span id="zoom-label" class="zoom-label">1,0×</span>
         </div>
         <div class="row buttons">
           <button id="btn-freeze" class="pill solid">⏸ Figer</button>

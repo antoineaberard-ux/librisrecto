@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-08-28 20:21';
+const LIBRIS_VERSION = '2026-09-01 14:53';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -99,6 +99,10 @@ const LibrisRecto = (() => {
       running = true;
       setupTrack();
       startWorker();
+      // videoWidth vaut 0 tant que les métadonnées ne sont pas arrivées : la
+      // plage de zoom ne peut être calculée qu'ensuite.
+      video.addEventListener('loadedmetadata', refreshZoomRange, { once: true });
+      if (video.videoWidth) refreshZoomRange();
     } catch (err) {
       const denied = /NotAllowed|Permission/i.test(String(err));
       showNoCam(denied ? 'Caméra refusée. Autorisez-la puis réessayez.' : 'Caméra inaccessible.');
@@ -213,6 +217,42 @@ const LibrisRecto = (() => {
     if (m) m.hidden = true;
   }
 
+  /* Applique une distance de mise au point et VÉRIFIE qu'elle a été prise.
+
+     `advanced` est au mieux par spécification : le navigateur applique si
+     possible et n'échoue jamais. Sur un appareil qui ignore le réglage, le
+     balayage se déroulait donc en entier sans erreur et sans que l'objectif
+     bouge. Les contraintes de base, elles, rejettent quand elles ne peuvent
+     pas être satisfaites ; getSettings() dit ensuite ce qui a réellement été
+     appliqué. */
+  async function appliquerDistance(distance) {
+    let erreur = null;
+    try {
+      await track.applyConstraints({ focusMode: 'manual', focusDistance: distance });
+    } catch (e) {
+      erreur = e;
+      try { await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: distance }] }); }
+      catch { /* on lira les réglages réels ci-dessous */ }
+    }
+    const reglages = track.getSettings ? track.getSettings() : {};
+    return { demande: distance, applique: reglages.focusDistance, mode: reglages.focusMode, erreur };
+  }
+
+  /* Laisse l'objectif se déplacer, puis attend une image réellement neuve.
+     L'attente d'image est PLAFONNÉE : en arrière-plan la page n'en reçoit plus
+     et une attente non bornée figerait le balayage sur « Mise au point… ». */
+  function attendreImage(ms) {
+    const pause = new Promise((r) => setTimeout(r, ms));
+    if (typeof video.requestVideoFrameCallback !== 'function') return pause;
+    return pause.then(() => Promise.race([
+      new Promise((r) => video.requestVideoFrameCallback(() => r())),
+      new Promise((r) => setTimeout(r, 400))
+    ]));
+  }
+
+  let sweepEnCours = false;
+  let rapportMiseAuPoint = null;   // compte rendu du dernier balayage, pour le diagnostic
+
   async function autofocusSweep() {
     if (sweepEnCours || !autofocusSupporte()) return false;
     sweepEnCours = true;
@@ -236,7 +276,10 @@ const LibrisRecto = (() => {
       // le réglage est ignoré et il faut le dire plutôt que prétendre l'inverse.
       const distancesAppliquees = new Set(mesures.map((m) => (m.a == null ? 'n/d' : m.a.toFixed(3))));
       const notes = mesures.map((m) => m.n);
-      const ecart = Math.max(...notes) / Math.max(1, Math.min(...notes));
+      // La netteté normalisée vaut ~0,1 à 0,3 : un plancher à 1 écrasait le
+      // rapport sous 1 et faisait passer un balayage réussi pour un échec.
+      const bas = Math.max(1e-4, Math.min(...notes));
+      const ecart = Math.max(...notes) / bas;
       const suivi = distancesAppliquees.size > 1 || ecart > 1.15;
 
       derniereMiseAuPoint = meilleur.distance.toFixed(2);
@@ -261,15 +304,16 @@ const LibrisRecto = (() => {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw) return null;
     const w = window.innerWidth, h = window.innerHeight;
-    const rad = -currentAngle() * Math.PI / 180;
-    const s = coverScale(currentAngle()) * zoom;
+    const angle = currentAngle();
+    const rad = -angle * Math.PI / 180;
+    const S = stageScale(angle), fit = fitScale();
+    // On défait la rotation puis l'échelle de la scène, ce qui ramène dans le
+    // repère de l'élément vidéo, où le cadre est centré à l'échelle `fit`.
     const dx = px - w / 2, dy = py - h / 2;
-    const ux = (dx * Math.cos(rad) - dy * Math.sin(rad)) / s + w / 2;
-    const uy = (dx * Math.sin(rad) + dy * Math.cos(rad)) / s + h / 2;
-    const cover = Math.max(w / vw, h / vh);
-    const dispW = vw * cover, dispH = vh * cover;
+    const ux = (dx * Math.cos(rad) - dy * Math.sin(rad)) / S;
+    const uy = (dx * Math.sin(rad) + dy * Math.cos(rad)) / S;
     const clamp = (v) => Math.min(1, Math.max(0, v));
-    return { x: clamp((ux - (w - dispW) / 2) / dispW), y: clamp((uy - (h - dispH) / 2) / dispH) };
+    return { x: clamp(0.5 + ux / (vw * fit)), y: clamp(0.5 + uy / (vh * fit)) };
   }
 
   async function focusAt(px, py) {
@@ -313,23 +357,49 @@ const LibrisRecto = (() => {
 
   // Le curseur pilote le zoom OPTIQUE quand la caméra le permet (bien plus net
   // qu'un agrandissement de pixels), sinon il retombe sur un scale CSS.
+  /* Le minimum du curseur dépend de la géométrie : à zoom 1 la scène est déjà
+     agrandie du rapport entre les deux ajustements, qui vaut près de 4 sur un
+     écran portrait devant un capteur paysage. Un minimum fixe à 0,4 laissait
+     donc l'image toujours quatre fois trop grosse. On descend jusqu'à voir le
+     cadre entier, avec un peu de marge. */
+  function refreshZoomRange() {
+    const z = $('zoom');
+    const plancher = Math.max(0.1, 1 / (coverRatio() * 1.25));
+    z.min = plancher.toFixed(2);
+    z.max = 4; z.step = 0.05;
+    if (+z.value < plancher) applyZoom(plancher);
+  }
   function setupZoomSlider() {
     const z = $('zoom');
-    z.min = 1; z.max = 4; z.step = 0.1; z.value = 1;
+    z.value = 1; zoom = 1;
+    $('zoom-label').textContent = '1,0×';
+    refreshZoomRange();
     $('zoom-row').classList.toggle('optical', !!caps.zoom);
   }
   function applyZoom(value) {
+    zoom = value;
+    // Le zoom optique ne descend jamais sous 1 : en dessous c'est l'affichage
+    // qui recule, pour révéler le cadre entier du capteur.
     if (!frozen && caps.zoom && track?.applyConstraints) {
       const { min, max, step } = caps.zoom;
-      const top = Math.min(max, min * 4);
-      const target = min + (value - 1) / 3 * (top - min);
-      zoom = 1;                       // pas de double zoom : le capteur s'en charge
-      track.applyConstraints({ advanced: [{ zoom: step ? Math.round(target / step) * step : target }] })
-        .catch(() => { zoom = value; });
-    } else {
-      zoom = value;
+      if (value > 1) {
+        const haut = Math.min(max, min * 4);
+        const cible = min + (value - 1) / 3 * (haut - min);
+        zoom = 1;                     // pas de double zoom : le capteur s'en charge
+        track.applyConstraints({ advanced: [{ zoom: step ? Math.round(cible / step) * step : cible }] })
+          .catch(() => { zoom = value; });
+      } else {
+        track.applyConstraints({ advanced: [{ zoom: min }] }).catch(() => {});
+      }
     }
+    $('zoom').value = value;
+    $('zoom-label').textContent = value.toFixed(1).replace('.', ',') + '×';
     freezeDirty = true;
+    applyTransform();
+  }
+  function nudgeZoom(delta) {
+    const z = $('zoom');
+    applyZoom(Math.min(+z.max, Math.max(+z.min, +z.value + delta)));
   }
   function restoreStream() {
     if (stream && !video.srcObject) { video.srcObject = stream; video.play().catch(() => {}); }
@@ -340,12 +410,13 @@ const LibrisRecto = (() => {
   // portion que celle affichée, sinon le cadre à l'écran ment sur ce qui est lu.
   function roiGeometry(vw, vh, wFrac = ROI_W, hFrac = ROI_H) {
     if (!vw || !vh) return null;
-    const screenRatio = window.innerWidth / window.innerHeight;
-    let coverW, coverH;
-    if (vw / vh > screenRatio) { coverH = vh; coverW = vh * screenRatio; }
-    else { coverW = vw; coverH = vw / screenRatio; }
-    const sw = Math.max(16, Math.round(coverW * wFrac));
-    const sh = Math.max(16, Math.round(coverH * hFrac));
+    // Échelle SANS la marge de rotation : celle-ci dépend de l'angle mesuré, et
+    // s'en servir ici ferait dépendre la zone analysée du résultat de l'analyse.
+    // La boucle de rétroaction ainsi créée faisait osciller l'angle détecté.
+    const total = fitScale() * coverRatio() * zoom;
+    if (!(total > 0)) return null;
+    const sw = Math.max(16, Math.min(vw, Math.round(window.innerWidth * wFrac / total)));
+    const sh = Math.max(16, Math.min(vh, Math.round(window.innerHeight * hFrac / total)));
     return { sx: Math.round((vw - sw) / 2), sy: Math.round((vh - sh) / 2), sw, sh };
   }
   function currentSource() {
@@ -414,6 +485,33 @@ const LibrisRecto = (() => {
     if (scanMode) return 0;
     return (useAuto ? -dispAngle : 0) + quarterTurns * 90 + manualOffset;
   }
+  /* Géométrie d'affichage.
+
+     La vidéo est en `object-fit: contain` : l'élément montre TOUT le cadre du
+     capteur, avec des bandes. C'est ce qui rend le dézoom possible — en `cover`
+     l'image était recadrée avant même d'arriver à l'écran, et réduire l'échelle
+     n'aurait rien révélé de plus.
+
+     Pour retrouver le remplissage plein écran, l'échelle de la scène intègre le
+     rapport entre les deux ajustements : à zoom 1 l'affichage est identique à
+     l'ancien, en dessous les bandes réapparaissent et l'on voit l'intégralité
+     de ce que voit la caméra. */
+  function fitScale() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return 1;
+    return Math.min(window.innerWidth / vw, window.innerHeight / vh);
+  }
+  function coverRatio() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return 1;
+    const w = window.innerWidth, h = window.innerHeight;
+    return Math.max(w / vw, h / vh) / Math.min(w / vw, h / vh);
+  }
+  // Échelle appliquée à la scène : remplissage, marge de rotation, puis zoom.
+  function stageScale(angleDeg) {
+    return coverRatio() * coverScale(angleDeg) * zoom;
+  }
+
   // Agrandit juste ce qu'il faut pour qu'aucun coin vide n'apparaisse après rotation.
   function coverScale(angleDeg) {
     const r = Math.abs(angleDeg) * Math.PI / 180;
@@ -423,7 +521,7 @@ const LibrisRecto = (() => {
   }
   function applyTransform() {
     const angle = currentAngle();
-    stage.style.transform = `rotate(${angle.toFixed(2)}deg) scale(${(coverScale(angle) * zoom).toFixed(4)})`;
+    stage.style.transform = `rotate(${angle.toFixed(2)}deg) scale(${stageScale(angle).toFixed(4)})`;
     if (locked && useAuto && !scanMode) {
       badge.textContent = `Redressé · ${angle.toFixed(0)}°`;
       badge.classList.add('active');
@@ -471,7 +569,7 @@ const LibrisRecto = (() => {
     freezeCanvas.hidden = false;
     // Le zoom optique est déjà dans la frame capturée : on repart de 1 pour
     // que le curseur ne l'applique pas une seconde fois en CSS.
-    zoom = 1; $('zoom').value = 1;
+    zoom = 1; $('zoom').value = 1; $('zoom-label').textContent = '1,0×';
     freezeDirty = false; renderFreeze();
     $('btn-freeze').innerHTML = '▶ Reprendre';
     haptic(15);
@@ -479,9 +577,7 @@ const LibrisRecto = (() => {
   function unfreeze() {
     frozen = false; freezeCanvas.hidden = true;
     $('btn-freeze').innerHTML = '⏸ Figer';
-    zoom = 1; $('zoom').value = 1;
     applyZoom(1);
-    applyTransform();
   }
   function renderFreeze() {
     if (!rawFrame) return;
@@ -495,7 +591,7 @@ const LibrisRecto = (() => {
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
     const angle = currentAngle();
     const vw = rawFrame.width, vh = rawFrame.height;
-    const s = Math.max(w / vw, h / vh) * coverScale(angle) * zoom;
+    const s = Math.min(w / vw, h / vh) * stageScale(angle);
     ctx.translate(w / 2, h / 2);
     ctx.rotate(angle * Math.PI / 180);
     ctx.drawImage(rawFrame, -vw * s / 2, -vh * s / 2, vw * s, vh * s);
@@ -1279,17 +1375,28 @@ const LibrisRecto = (() => {
     $('btn-reset').addEventListener('click', () => {
       useAuto = !useAuto;
       manualOffset = 0; quarterTurns = 0; $('rotate-fine').value = 0; freezeDirty = true;
+      $('btn-quarter-left').classList.remove('on');
+      $('btn-quarter-right').classList.remove('on');
+      applyZoom(1);
       $('btn-reset').textContent = useAuto ? 'Auto' : 'Manuel';
       $('btn-reset').classList.toggle('on', useAuto);
     });
     // Le redressement automatique est à ±45° près : un dos de livre vertical
-    // se retrouve droit mais à la verticale, d'où le quart de tour manuel.
-    $('btn-quarter').addEventListener('click', () => {
-      quarterTurns = (quarterTurns + 1) % 4; freezeDirty = true;
-      $('btn-quarter').classList.toggle('on', quarterTurns !== 0);
+    // se retrouve droit mais à la verticale, d'où les quarts de tour manuels —
+    // dans les deux sens, pour ne pas imposer trois appuis quand un suffit.
+    const quartDeTour = (sens) => {
+      quarterTurns = (quarterTurns + sens + 4) % 4;
+      freezeDirty = true;
+      $('btn-quarter-left').classList.toggle('on', quarterTurns !== 0);
+      $('btn-quarter-right').classList.toggle('on', quarterTurns !== 0);
+      applyTransform();
       haptic(10);
-    });
+    };
+    $('btn-quarter-left').addEventListener('click', () => quartDeTour(-1));
+    $('btn-quarter-right').addEventListener('click', () => quartDeTour(1));
     $('zoom').addEventListener('input', (e) => applyZoom(+e.target.value));
+    $('btn-zoom-out').addEventListener('click', () => nudgeZoom(-0.2));
+    $('btn-zoom-in').addEventListener('click', () => nudgeZoom(0.2));
     $('btn-torch').addEventListener('click', toggleTorch);
     // Toucher l'image = faire le point là où on vise. Indispensable pour un
     // code-barres tenu à 15 cm, que l'autofocus continu rate souvent.
@@ -1328,7 +1435,7 @@ const LibrisRecto = (() => {
 
     $('btn-start').addEventListener('click', startCamera);
     $('btn-retry').addEventListener('click', startCamera);
-    window.addEventListener('resize', () => { applyTransform(); freezeDirty = true; });
+    window.addEventListener('resize', () => { refreshZoomRange(); applyTransform(); freezeDirty = true; });
 
     $('cam-gate').hidden = false;
     setTimeout(() => $('cv-status').classList.add('hide'), 4000);

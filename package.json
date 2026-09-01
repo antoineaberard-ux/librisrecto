@@ -6,11 +6,12 @@
   "type": "module",
   "scripts": {
     "www": "node scripts/build-www.mjs",
-    "test": "node test/angle.test.mjs",
+    "test": "node scripts/check-refs.mjs && node test/angle.test.mjs",
     "sync": "npm run www && cap sync android",
     "apk": "npm run sync && node scripts/build-apk.mjs",
     "stamp": "node scripts/stamp.mjs",
-    "deploy": "npm run stamp && firebase deploy --only hosting"
+    "deploy": "npm run stamp && firebase deploy --only hosting",
+    "check": "node scripts/check-refs.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

@@ -111,6 +111,28 @@ du service worker. Le diagnostic l'affiche : c'est la première chose à vérifi
 devant un « ça ne marche toujours pas », un téléphone pouvant tourner sur une
 version en cache.
 
+## Cadrage
+
+La vidéo est affichée en `object-fit: contain` et c'est l'échelle de la scène
+qui remplit l'écran. En `cover`, l'image était recadrée avant même d'arriver à
+l'écran : réduire l'échelle n'aurait rien révélé de plus, le dézoom était donc
+impossible. Le minimum du curseur est calculé d'après la géométrie — sur un
+écran portrait devant un capteur paysage, l'échelle à zoom 1 approche déjà 4 —
+et descend jusqu'à montrer le cadre entier du capteur.
+
+Les quarts de tour existent **dans les deux sens** : le redressement étant
+modulo 90°, un dos de livre vertical peut demander un quart de tour d'un côté
+comme de l'autre, et un cycle à sens unique imposait jusqu'à trois appuis.
+
+## Vérification des références
+
+`npm test` lance `scripts/check-refs.mjs` avant les tests d'angle. Il repère les
+identifiants employés mais jamais déclarés. `node --check` ne contrôle que la
+syntaxe : un appel à une fonction inexistante ou une affectation à une variable
+non déclarée passent sans bruit et n'explosent qu'à l'exécution. Deux pannes de
+ce type ont été livrées — un balayage de mise au point qui mourait à sa première
+ligne, et l'écran de diagnostic qui refusait de s'ouvrir.
+
 ## Diagnostic
 
 Le bouton **Diagnostic de l'appareil**, dans « Infos livre », affiche ce que le
