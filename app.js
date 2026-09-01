@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-09-01 15:15';
+const LIBRIS_VERSION = '2026-09-01 15:34';
 
 /* Une erreur avalée est une panne muette : on garde la dernière pour le
    diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -291,6 +291,31 @@ const LibrisRecto = (() => {
 
   let sweepEnCours = false;
   let rapportMiseAuPoint = null;   // compte rendu du dernier balayage, pour le diagnostic
+
+  /* Netteté d'un canevas quelconque, même mesure que pour la mise au point :
+     énergie des gradients divisée par l'écart-type, donc indépendante du
+     contraste de la scène. Sert à dire POURQUOI un scan a échoué. */
+  function netteteCanevas(canevas) {
+    if (!canevas || !canevas.width) return 0;
+    const W = Math.min(240, canevas.width), H = Math.max(1, Math.round(canevas.height * W / canevas.width));
+    const tmp = document.createElement('canvas');
+    tmp.width = W; tmp.height = H;
+    const ctx = tmp.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canevas, 0, 0, W, H);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    let somme = 0, carres = 0, grad = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = (y * W + x) * 4, v = d[i];
+        somme += v; carres += v * v; n++;
+        grad += Math.abs(v - d[i + 4]) + Math.abs(v - d[i + W * 4]);
+      }
+    }
+    if (!n) return 0;
+    const moy = somme / n;
+    const et = Math.sqrt(Math.max(0, carres / n - moy * moy));
+    return et < 4 ? 0 : (grad / n) / et;
+  }
 
   let dernierBalayage = 0;
   async function autofocusSweep() {
@@ -765,6 +790,7 @@ const LibrisRecto = (() => {
     try {
       const decode = await pickDecoder();
       lastDecoder = decode.moteur;
+      scanTentatives = 0;
       const code = await new Promise((resolve, reject) => {
         timer = setTimeout(() => { cancelScan?.(); reject(new Error('timeout')); }, 30000);
         pumpFrames(decode).then(resolve, reject);
@@ -778,9 +804,20 @@ const LibrisRecto = (() => {
       endScan();
       if (String(err.message) === 'cancel') return;
       openSheet();
-      showError(/CDN/.test(String(err.message))
-        ? "Scanner indisponible hors connexion. Saisissez l'ISBN à la main."
-        : "Code-barres non détecté. Tenez le code à 15 cm dans le cadre, touchez l'écran pour faire le point, allumez la lampe si besoin — ou saisissez l'ISBN à la main.");
+      if (/CDN/.test(String(err.message))) {
+        showError("Scanner indisponible hors connexion. Saisissez l'ISBN à la main.");
+      } else {
+        // Un échec chiffré vaut mieux qu'un échec muet : la netteté dit s'il
+        // faut corriger la distance, et le nombre d'images si le scan a
+        // seulement manqué de temps.
+        const nettete = netteteCanevas(lastScanShot);
+        const taille = lastScanShot ? `${lastScanShot.width}×${lastScanShot.height}` : 'aucune';
+        journaliser('scan', `échec — ${scanTentatives} images, ${taille}, netteté ${nettete.toFixed(3)}`);
+        const flou = nettete > 0 && nettete < 0.16;
+        showError(`Code-barres non détecté après ${scanTentatives} images analysées`
+          + (flou ? ` — l'image est floue (netteté ${nettete.toFixed(2)}). Changez de distance : reculez ou avancez de quelques centimètres, l'appareil ne règle pas la mise au point tout seul.`
+                  : `. Rapprochez-vous pour que le code remplisse le cadre, évitez les reflets, ou saisissez l'ISBN à la main.`));
+      }
     }
   }
   function endScan() {
@@ -842,6 +879,14 @@ const LibrisRecto = (() => {
         const source = (useCrop ? scanFrameCrop() : fullFrame(maxWidth)) || fullFrame(maxWidth);
         useCrop = !useCrop;
         if (source) {
+          scanTentatives++;
+          // Une copie, car les deux canevas de travail sont réécrits à chaque
+          // image : sans copie le diagnostic ne montrerait que la dernière.
+          if (scanTentatives % 8 === 1) {
+            if (!lastScanShot) lastScanShot = document.createElement('canvas');
+            lastScanShot.width = source.width; lastScanShot.height = source.height;
+            lastScanShot.getContext('2d').drawImage(source, 0, 0);
+          }
           try {
             const code = await decode(source);
             if (code) { stopped = true; return resolve(code); }
@@ -1225,6 +1270,8 @@ const LibrisRecto = (() => {
   let fps = { frames: 0, since: performance.now(), value: 0 };
   let lastDecoder = '—';
   let lastShot = null;      // dernière image envoyée à l'OCR, montrée au diagnostic
+  let lastScanShot = null;  // idem pour le lecteur de code-barres
+  let scanTentatives = 0;   // nombre d'images réellement analysées
   let lastOcrText = '';     // ce que l'OCR a réellement lu, même si on l'a rejeté
 
   async function openDiag() {
@@ -1257,7 +1304,7 @@ const LibrisRecto = (() => {
                          : 'BarcodeDetector présent mais sans format';
     }
     lines.push(['Code-barres', barcode]);
-    lines.push(['Dernier scan', lastDecoder]);
+    lines.push(['Dernier scan', lastDecoder + (scanTentatives ? ` — ${scanTentatives} images analysées` : '')]);
     lines.push(['OCR', window.Tesseract ? 'moteur chargé' : 'pas encore téléchargé']);
     if (lastOcrText) lines.push(['Dernier texte lu', lastOcrText.slice(0, 120)]);
     lines.push(['Historique', window.LibrisHistory?.isSynced() ? 'synchronisé' : 'local seulement']);
@@ -1278,6 +1325,15 @@ const LibrisRecto = (() => {
       const dd = document.createElement('span'); dd.className = 'v'; dd.textContent = v;
       li.append(dt, dd); ul.append(li);
     }
+    const apercuScan = $('diag-scan-shot');
+    if (lastScanShot) {
+      apercuScan.hidden = false;
+      $('diag-scan-img').src = lastScanShot.toDataURL('image/jpeg', 0.7);
+      $('diag-scan-size').textContent = `${lastScanShot.width}×${lastScanShot.height}`;
+    } else {
+      apercuScan.hidden = true;
+    }
+
     const preview = $('diag-shot');
     if (lastShot) {
       preview.hidden = false;
