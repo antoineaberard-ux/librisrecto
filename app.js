@@ -12,7 +12,7 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-09-01 14:53';
+const LIBRIS_VERSION = '2026-09-01 15:05';
 
 // Une erreur avalée est une panne muette : on garde la dernière pour le
 // diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
@@ -1343,7 +1343,9 @@ const LibrisRecto = (() => {
   function openDialog() {
     dismissSheet();
     const p = $('info-sheet');
-    p.classList.add('open');
+    // Pleine hauteur : à 46 % le contenu déborde et le lien du diagnostic,
+    // placé en dernier, restait invisible sans défilement deviné.
+    p.classList.add('open', 'full');
     p.setAttribute('aria-hidden', 'false');
   }
   function closeDialog() {
@@ -1411,6 +1413,7 @@ const LibrisRecto = (() => {
     $('btn-read-title').addEventListener('click', readTitle);
     $('btn-scan-cancel').addEventListener('click', () => cancelScan?.());
     $('btn-diag').addEventListener('click', openDiag);
+    $('btn-diag-top').addEventListener('click', openDiag);
     $('diag-close').addEventListener('click', closeDiag);
     $('diag-copy').addEventListener('click', copyDiag);
     $('diag-refresh').addEventListener('click', forceUpdate);

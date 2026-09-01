@@ -135,7 +135,12 @@ ligne, et l'écran de diagnostic qui refusait de s'ouvrir.
 
 ## Diagnostic
 
-Le bouton **Diagnostic de l'appareil**, dans « Infos livre », affiche ce que le
+Le diagnostic s'ouvre par le bouton **⚙** de la barre du haut, toujours visible,
+ou par le lien en bas de « Infos livre ». Ce panneau s'ouvrait auparavant à 46 %
+de hauteur alors que son contenu est plus long : le lien, placé en dernier,
+restait sous le pli et l'écran était en pratique inaccessible.
+
+Il affiche ce que le
 téléphone sait réellement faire : résolution, images par seconde, réglages
 caméra disponibles, moteur de code-barres, dernier texte lu, dernière image
 envoyée à l'OCR, **version chargée** et **dernière erreur JavaScript**. Les
