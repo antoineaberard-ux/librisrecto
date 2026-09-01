@@ -20,10 +20,13 @@ html, body {
 /* Scène redressée */
 .stage { position: absolute; inset: 0; transform-origin: 50% 50%;
   will-change: transform; backface-visibility: hidden; }
-/* `contain` et non `cover` : l'élément montre tout le cadre du capteur, et
-   c'est l'échelle de la scène qui remplit l'écran. Sans cela, l'image était
-   recadrée avant l'affichage et le dézoom ne pouvait rien révéler de plus. */
-#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* La taille est posée en pixels par le script, à la dimension d'affichage
+   réelle : le grandissement ne passe donc pas par une transformation, qui
+   ferait tramer au navigateur une texture démesurée sur un téléphone.
+   L'élément est centré ; `fill` avec des dimensions déjà proportionnées ne
+   déforme rien. */
+#video { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  object-fit: fill; will-change: auto; }
 .freeze { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; background: #000; }
 
 .overlay { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;

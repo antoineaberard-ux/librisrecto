@@ -12,16 +12,41 @@
 
 // Version affichée dans le diagnostic : sans elle, impossible de savoir si un
 // téléphone tourne encore sur une version en cache.
-const LIBRIS_VERSION = '2026-09-01 15:05';
+const LIBRIS_VERSION = '2026-09-01 15:15';
 
-// Une erreur avalée est une panne muette : on garde la dernière pour le
-// diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
+/* Une erreur avalée est une panne muette : on garde la dernière pour le
+   diagnostic. Posé avant tout le reste pour attraper aussi les erreurs d'init.
+
+   Elle est aussi ÉCRITE SUR LE DISQUE. Quand l'application se ferme ou que
+   l'onglet est tué, tout ce qui vit en mémoire disparaît avec elle, y compris
+   la trace de ce qui l'a tuée : au rechargement il ne reste plus rien à lire.
+   Le journal persistant survit, et le diagnostic le montre. */
+const LIBRIS_JOURNAL = 'librisrecto.journal';
+
+function journaliser(type, texte) {
+  const entree = { t: new Date().toISOString().slice(0, 16).replace('T', ' '), type, texte: String(texte).slice(0, 200) };
+  try {
+    const journal = JSON.parse(localStorage.getItem(LIBRIS_JOURNAL) || '[]');
+    journal.push(entree);
+    // Cinq entrées suffisent : c'est ce qui précède immédiatement la panne
+    // qui renseigne, pas l'historique complet.
+    localStorage.setItem(LIBRIS_JOURNAL, JSON.stringify(journal.slice(-5)));
+  } catch { /* navigation privée ou quota : on garde au moins la version mémoire */ }
+  return entree;
+}
+function lireJournal() {
+  try { return JSON.parse(localStorage.getItem(LIBRIS_JOURNAL) || '[]'); }
+  catch { return []; }
+}
+
 window.__librisLastError = null;
 window.addEventListener('error', (e) => {
   window.__librisLastError = `${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`;
+  journaliser('erreur', window.__librisLastError);
 });
 window.addEventListener('unhandledrejection', (e) => {
   window.__librisLastError = 'promesse rejetée : ' + (e.reason?.message || e.reason);
+  journaliser('promesse', window.__librisLastError);
 });
 
 const LibrisRecto = (() => {
@@ -113,8 +138,21 @@ const LibrisRecto = (() => {
   /* Capacités de la piste vidéo. Android Chrome expose focus, torche et zoom
      optique ; iOS Safari n'expose rien de tout ça (applyConstraints échoue en
      silence), d'où les boutons masqués plutôt que morts. */
+  /* Une piste vidéo peut s'arrêter d'elle-même : pilote qui tombe, caméra
+     réquisitionnée par une autre application, mise en veille. Sans surveillance,
+     l'écran reste noir sans un mot et l'utilisateur conclut que tout a planté. */
+  function surveillerPiste() {
+    if (!track) return;
+    track.addEventListener('ended', () => {
+      journaliser('camera', 'piste arrêtée');
+      running = false;
+      showNoCam('La caméra s\'est arrêtée. Touchez « Réessayer ».');
+    });
+  }
+
   function setupTrack() {
     track = stream.getVideoTracks()[0] || null;
+    surveillerPiste();
     caps = track?.getCapabilities ? (track.getCapabilities() || {}) : {};
     applyFocusMode('continuous');
     $('btn-torch').hidden = !caps.torch;
@@ -227,13 +265,14 @@ const LibrisRecto = (() => {
      appliqué. */
   async function appliquerDistance(distance) {
     let erreur = null;
+    // `advanced` uniquement. Une contrainte OBLIGATOIRE peut forcer Android à
+    // renégocier la session de capture ; répétée à chaque pas du balayage, elle
+    // fait tomber le pilote et la caméra s'arrête. `advanced` est appliquée au
+    // mieux, sans renégociation — et getSettings() dit de toute façon la vérité
+    // sur ce qui a réellement été pris, ce qui rend l'obligatoire inutile ici.
     try {
-      await track.applyConstraints({ focusMode: 'manual', focusDistance: distance });
-    } catch (e) {
-      erreur = e;
-      try { await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: distance }] }); }
-      catch { /* on lira les réglages réels ci-dessous */ }
-    }
+      await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: distance }] });
+    } catch (e) { erreur = e; }
     const reglages = track.getSettings ? track.getSettings() : {};
     return { demande: distance, applique: reglages.focusDistance, mode: reglages.focusMode, erreur };
   }
@@ -253,11 +292,19 @@ const LibrisRecto = (() => {
   let sweepEnCours = false;
   let rapportMiseAuPoint = null;   // compte rendu du dernier balayage, pour le diagnostic
 
+  let dernierBalayage = 0;
   async function autofocusSweep() {
     if (sweepEnCours || !autofocusSupporte()) return false;
+    // Jamais deux balayages coup sur coup : enchaîner les reconfigurations est
+    // précisément ce qui met la caméra à genoux.
+    if (performance.now() - dernierBalayage < 4000) return false;
+    dernierBalayage = performance.now();
+    journaliser('etape', 'balayage mise au point');
     sweepEnCours = true;
     const { min, max } = caps.focusDistance;
-    const pas = 8;
+    // Cinq pas plutôt que huit : chaque pas sollicite le pilote de la caméra,
+    // et la précision gagnée au-delà ne compense pas le risque.
+    const pas = 5;
     const mesures = [];
     let meilleur = { note: -1, distance: min };
     try {
@@ -392,6 +439,7 @@ const LibrisRecto = (() => {
         track.applyConstraints({ advanced: [{ zoom: min }] }).catch(() => {});
       }
     }
+    tailleVideoPosee = '';            // force le recalcul de la taille d'affichage
     $('zoom').value = value;
     $('zoom-label').textContent = value.toFixed(1).replace('.', ',') + '×';
     freezeDirty = true;
@@ -519,9 +567,32 @@ const LibrisRecto = (() => {
     const cos = Math.abs(Math.cos(r)), sin = Math.abs(Math.sin(r));
     return Math.max((W * cos + H * sin) / W, (W * sin + H * cos) / H);
   }
+  let tailleVideoPosee = '';
+  /* Le grandissement est porté par la TAILLE de l'élément vidéo, pas par une
+     transformation de la scène.
+
+     Une échelle CSS s'applique à une couche composée (`will-change: transform`)
+     et peut atteindre 5,8 sur un écran portrait devant un capteur paysage : le
+     navigateur doit alors tramer une texture démesurée, ce qu'un téléphone paie
+     en mémoire. En dimensionnant la vidéo à sa taille d'affichage réelle, la
+     transformation ne porte plus que la rotation et sa marge — des valeurs
+     proches de 1. Le rendu est identique, le coût ne l'est pas. */
+  function poserTailleVideo() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return;
+    const taille = fitScale() * coverRatio() * zoom;
+    const l = Math.round(vw * taille), h = Math.round(vh * taille);
+    const cle = l + 'x' + h;
+    if (cle === tailleVideoPosee) return;   // une écriture de style par frame coûte cher
+    tailleVideoPosee = cle;
+    video.style.width = l + 'px';
+    video.style.height = h + 'px';
+  }
+
   function applyTransform() {
     const angle = currentAngle();
-    stage.style.transform = `rotate(${angle.toFixed(2)}deg) scale(${stageScale(angle).toFixed(4)})`;
+    poserTailleVideo();
+    stage.style.transform = `rotate(${angle.toFixed(2)}deg) scale(${coverScale(angle).toFixed(4)})`;
     if (locked && useAuto && !scanMode) {
       badge.textContent = `Redressé · ${angle.toFixed(0)}°`;
       badge.classList.add('active');
@@ -668,6 +739,7 @@ const LibrisRecto = (() => {
 
   // ---------- Scan du code-barres ISBN ----------
   async function scanBarcode() {
+    journaliser('etape', 'scan ISBN');
     closeDialog();
     if (!stream) return showNoCam('Activez la caméra pour scanner un code-barres.');
     if (frozen) unfreeze();
@@ -830,6 +902,7 @@ const LibrisRecto = (() => {
 
   // ---------- Lecture du titre (OCR) ----------
   async function readTitle() {
+    journaliser('etape', 'lecture du titre');
     closeDialog();
     openSheet();
     showLoading('Préparation de la lecture…');
@@ -1162,6 +1235,7 @@ const LibrisRecto = (() => {
     lines.push(['Version', LIBRIS_VERSION]);
     lines.push(['Écran', `${window.innerWidth}×${window.innerHeight} @${DPR}x`]);
     lines.push(['Caméra', video.videoWidth ? `${video.videoWidth}×${video.videoHeight}` : 'non démarrée']);
+    lines.push(['État de la piste', track ? `${track.readyState}${track.muted ? ' (muette)' : ''}` : 'aucune']);
     lines.push(['Affichage', `${fps.value} img/s`]);
     lines.push(['Détecteur d\'angle', worker ? 'worker actif' : 'indisponible']);
     lines.push(['Angle détecté', locked ? `${(-dispAngle).toFixed(1)}°` : 'pas de verrou']);
@@ -1189,6 +1263,10 @@ const LibrisRecto = (() => {
     lines.push(['Historique', window.LibrisHistory?.isSynced() ? 'synchronisé' : 'local seulement']);
     lines.push(['Installée', window.matchMedia('(display-mode: standalone)').matches ? 'oui' : 'non (onglet)']);
     lines.push(['Dernière erreur', window.__librisLastError || 'aucune']);
+    const journal = lireJournal();
+    if (journal.length) {
+      lines.push(['Journal', journal.map((e) => `${e.t} ${e.type} : ${e.texte}`).join('\n')]);
+    }
     const inc = window.__librisIncidents || [];
     if (inc.length) lines.push(['Sources en échec', inc.join(' · ').slice(0, 160)]);
 
@@ -1438,7 +1516,10 @@ const LibrisRecto = (() => {
 
     $('btn-start').addEventListener('click', startCamera);
     $('btn-retry').addEventListener('click', startCamera);
-    window.addEventListener('resize', () => { refreshZoomRange(); applyTransform(); freezeDirty = true; });
+    window.addEventListener('resize', () => {
+      tailleVideoPosee = '';
+      refreshZoomRange(); applyTransform(); freezeDirty = true;
+    });
 
     $('cam-gate').hidden = false;
     setTimeout(() => $('cv-status').classList.add('hide'), 4000);

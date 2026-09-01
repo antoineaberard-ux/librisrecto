@@ -56,6 +56,20 @@ Ces trois réglages passent par `applyConstraints`. **Android Chrome** les
 supporte ; **iOS Safari** n'en expose aucun, donc le bouton lampe reste masqué
 et la mise au point reste celle du système.
 
+### Ne jamais forcer une contrainte sur une piste vivante
+
+Le balayage a d'abord été écrit avec des contraintes **obligatoires**, pour
+qu'un refus se voie. Mal lui en a pris : sur Android, un `applyConstraints`
+obligatoire peut forcer une renégociation de la session de capture, et cinq à
+neuf reconfigurations en quelques secondes font tomber le pilote — la caméra
+s'arrête. On s'en tient donc à `advanced`, appliquée au mieux et sans
+renégociation, et l'on relit `getSettings()` pour savoir ce qui a réellement été
+pris. La vérification est aussi bonne, sans le risque.
+
+Le balayage compte cinq pas et ne peut pas se relancer avant quatre secondes.
+La piste vidéo est surveillée : si elle s'arrête, l'app le dit et le note dans
+son journal, au lieu de laisser un écran noir muet.
+
 ### Quand la caméra n'a pas d'autofocus
 
 Certaines caméras Android n'exposent que `focusMode: ['manual']` : aucun
@@ -149,6 +163,11 @@ cet écran, un « ça ne marche pas » n'est pas vérifiable à distance.
 
 Le bouton **Forcer la mise à jour** désinscrit le service worker, vide les
 caches et recharge, pour le cas où une version périmée survivrait.
+
+Le **journal** garde les cinq derniers événements dans le stockage local :
+étapes engagées, erreurs, arrêts de caméra. Quand l'application se ferme, tout
+ce qui vit en mémoire disparaît avec elle, y compris la trace de ce qui l'a
+tuée ; le journal, lui, survit au rechargement.
 
 Le bouton **Tester les lecteurs** décode un code-barres et lit un texte
 fabriqués par l'app elle-même, sans caméra. Il sépare deux causes que
